@@ -19,22 +19,23 @@ public class SpeedMod implements ModInitializer {
     public static final Logger LOGGER = LoggerFactory.getLogger("speedmod");
 
     private static boolean enabled = false;
+    private static boolean lastRState = false;
     private static Entity target = null;
     private static long lastAttackTime = 0;
     private static final ConcurrentLinkedQueue<Long> attackTimes = new ConcurrentLinkedQueue<>();
     private static final Random random = new Random();
 
-    private static float currentYaw = 0;
-    private static float currentPitch = 0;
-    private static boolean anglesInitialized = false;
+    private static float lastYaw, lastPitch;
+    private static Vector2f rotateVector = new Vector2f(0, 0);
 
     private static final float RANGE = 4.2f;
     private static final float MIN_CPS = 6.5f;
     private static final float MAX_CPS = 9.5f;
+    private static final boolean CORRECTION_MOTION = true;
 
     @Override
     public void onInitialize() {
-        LOGGER.info("[SpeedMod] Killaura (RW mode) with No Sprint Reset loaded. Press R to toggle.");
+        LOGGER.info("[SpeedMod] RW mode. Press R ONCE to toggle on/off.");
 
         Thread tickThread = new Thread(() -> {
             while (true) {
@@ -44,18 +45,22 @@ public class SpeedMod implements ModInitializer {
                     if (client.player == null || client.world == null) continue;
 
                     long window = client.getWindow().getHandle();
-                    boolean rPressed = GLFW.glfwGetKey(window, GLFW.GLFW_KEY_R) == GLFW.GLFW_PRESS;
+                    boolean currentR = GLFW.glfwGetKey(window, GLFW.GLFW_KEY_R) == GLFW.GLFW_PRESS;
 
-                    if (rPressed && !enabled) {
-                        enabled = true;
-                        LOGGER.info("[Killaura] ENABLED");
-                        Thread.sleep(200);
-                    } else if (!rPressed && enabled) {
-                        enabled = false;
-                        target = null;
-                        LOGGER.info("[Killaura] DISABLED");
-                        Thread.sleep(200);
+                    // Однократное нажатие (по фронту сигнала)
+                    if (currentR && !lastRState) {
+                        enabled = !enabled;
+                        if (enabled) {
+                            LOGGER.info("[Killaura] ENABLED (single press)");
+                            // Инициализируем rotateVector текущими углами
+                            rotateVector = new Vector2f(client.player.getYaw(), client.player.getPitch());
+                        } else {
+                            LOGGER.info("[Killaura] DISABLED");
+                            target = null;
+                        }
+                        Thread.sleep(150); // антидребезг
                     }
+                    lastRState = currentR;
 
                     if (enabled) {
                         tick(client);
@@ -110,36 +115,28 @@ public class SpeedMod implements ModInitializer {
         Vec3d targetVec = target.getBoundingBox().getCenter().subtract(eyePos);
         double hyp = Math.hypot(targetVec.x, targetVec.z);
 
-        float targetYaw = (float) Math.toDegrees(Math.atan2(targetVec.z, targetVec.x)) - 90;
-        float targetPitch = (float) -Math.toDegrees(Math.atan2(targetVec.y, hyp));
+        float targetYaw = (float) MathHelper.wrapDegrees(Math.toDegrees(Math.atan2(targetVec.z, targetVec.x)) - 90);
+        float targetPitch = (float) (-Math.toDegrees(Math.atan2(targetVec.y, hyp)));
+        targetPitch = MathHelper.clamp(targetPitch, -89.0F, 89.0F);
 
-        targetYaw = wrapDegrees(targetYaw);
-        targetPitch = clamp(targetPitch, -89, 89);
-
-        if (!anglesInitialized) {
-            currentYaw = client.player.getYaw();
-            currentPitch = client.player.getPitch();
-            anglesInitialized = true;
-        }
-
-        float yawDelta = wrapDegrees(targetYaw - currentYaw);
-        float pitchDelta = wrapDegrees(targetPitch - currentPitch);
+        float yawDelta1 = MathHelper.wrapDegrees(targetYaw - rotateVector.x);
+        float pitchDelta1 = MathHelper.wrapDegrees(targetPitch - rotateVector.y);
 
         float baseYawSpeed = 52.0f;
         float basePitchSpeed = 44.0f;
 
         float newYaw, newPitch;
-        boolean attack = true;
+        boolean attack = true; // всегда атакуем
 
         if (attack && target != null) {
-            float snapFactor = 0.88f + (Math.min(Math.abs(yawDelta) / 90.0f, 1.0f) * 0.12f);
-            newYaw = currentYaw + yawDelta * snapFactor;
-            newPitch = currentPitch + pitchDelta * snapFactor;
+            float snapFactor = 0.88f + (Math.min(Math.abs(yawDelta1) / 90.0f, 1.0f) * 0.12f);
+            newYaw = rotateVector.x + yawDelta1 * snapFactor;
+            newPitch = rotateVector.y + pitchDelta1 * snapFactor;
         } else {
-            float yawSpeed = Math.min(Math.abs(yawDelta), baseYawSpeed);
-            float pitchSpeed = Math.min(Math.abs(pitchDelta), basePitchSpeed);
-            newYaw = currentYaw + (yawDelta > 0 ? yawSpeed : -yawSpeed);
-            newPitch = currentPitch + (pitchDelta > 0 ? pitchSpeed : -pitchSpeed);
+            float yawSpeed = Math.min(Math.abs(yawDelta1), baseYawSpeed);
+            float pitchSpeed = Math.min(Math.abs(pitchDelta1), basePitchSpeed);
+            newYaw = rotateVector.x + (yawDelta1 > 0 ? yawSpeed : -yawSpeed);
+            newPitch = rotateVector.y + (pitchDelta1 > 0 ? pitchSpeed : -pitchSpeed);
         }
 
         long time = System.currentTimeMillis();
@@ -155,61 +152,79 @@ public class SpeedMod implements ModInitializer {
         newYaw += (random.nextFloat() - 0.5f) * 0.018f;
         newPitch += (random.nextFloat() - 0.5f) * 0.014f;
 
-        // Исправление: double -> float
-        double sens = client.options.getMouseSensitivity().getValue();
-        float gcd = (float) (sens * 0.6 + 0.2);
-        gcd = gcd * gcd * gcd * 8.0f;
-
+        float gcd = SensUtils.getGCDValue(client);
         float gcdVariation = 0.985f + (random.nextFloat() * 0.03f);
-        newYaw -= (newYaw - currentYaw) % (gcd * gcdVariation);
-        newPitch -= (newPitch - currentPitch) % (gcd * gcdVariation * 0.95f);
+        newYaw -= (newYaw - rotateVector.x) % (gcd * gcdVariation);
+        newPitch -= (newPitch - rotateVector.y) % (gcd * gcdVariation * 0.95f);
 
-        float maxChange = 38.0f;
-        newYaw = currentYaw + clamp(newYaw - currentYaw, -maxChange, maxChange);
-        newPitch = currentPitch + clamp(newPitch - currentPitch, -maxChange * 0.85f, maxChange * 0.85f);
+        float maxChange = attack ? 38.0f : 28.0f;
+        newYaw = rotateVector.x + MathHelper.clamp(newYaw - rotateVector.x, -maxChange, maxChange);
+        newPitch = rotateVector.y + MathHelper.clamp(newPitch - rotateVector.y, -maxChange * 0.85f, maxChange * 0.85f);
 
-        newPitch = clamp(newPitch, -89, 89);
+        newPitch = MathHelper.clamp(newPitch, -89.0F, 89.0F);
 
-        float smoothFactor = 0.78f + random.nextFloat() * 0.22f;
-        newYaw = currentYaw + (newYaw - currentYaw) * smoothFactor;
-        newPitch = currentPitch + (newPitch - currentPitch) * smoothFactor;
+        float smoothFactor = 0.78f + (random.nextFloat() * 0.22f);
+        newYaw = rotateVector.x + (newYaw - rotateVector.x) * smoothFactor;
+        newPitch = rotateVector.y + (newPitch - rotateVector.y) * smoothFactor;
 
-        currentYaw = newYaw;
-        currentPitch = newPitch;
+        rotateVector = new Vector2f(newYaw, newPitch);
 
-        client.player.setYaw(currentYaw);
-        client.player.setPitch(currentPitch);
-        client.player.bodyYaw = currentYaw;
-        client.player.headYaw = currentYaw;
-        if (age % 8 == 0) {
-            client.player.headYaw += (random.nextFloat() - 0.5f) * 0.6f;
+        if (CORRECTION_MOTION) {
+            client.player.bodyYaw = newYaw;
+            client.player.headYaw = newYaw;
+            client.player.renderYawOffset = newYaw;
+            if (age % 8 == 0) {
+                client.player.headYaw += (random.nextFloat() - 0.5f) * 0.6f;
+            }
         }
+
+        lastYaw = newYaw;
+        lastPitch = newPitch;
+
+        if (time % 2000 < 100) {
+            float randomizer = 0.9f + (random.nextFloat() * 0.2f);
+            rotateVector = new Vector2f(
+                rotateVector.x * randomizer,
+                MathHelper.clamp(rotateVector.y * randomizer, -89.0F, 89.0F)
+            );
+        }
+
+        client.player.setYaw(rotateVector.x);
+        client.player.setPitch(rotateVector.y);
 
         // No Sprint Reset
         boolean wasSprinting = client.player.isSprinting();
         client.interactionManager.attackEntity(client.player, target);
-        if (wasSprinting) {
-            client.player.setSprinting(true);
-        }
+        if (wasSprinting) client.player.setSprinting(true);
         client.player.setSprinting(true);
+    }
 
-        if (time % 2000 < 100) {
-            float randomizer = 0.9f + random.nextFloat() * 0.2f;
-            currentYaw *= randomizer;
-            currentPitch = clamp(currentPitch * randomizer, -89, 89);
+    // ====== Вспомогательные классы ======
+    static class Vector2f {
+        float x, y;
+        Vector2f(float x, float y) { this.x = x; this.y = y; }
+    }
+
+    static class MathHelper {
+        static float wrapDegrees(float value) {
+            value %= 360.0F;
+            if (value >= 180.0F) value -= 360.0F;
+            if (value < -180.0F) value += 360.0F;
+            return value;
+        }
+        static float clamp(float value, float min, float max) {
+            if (value < min) return min;
+            if (value > max) return max;
+            return value;
         }
     }
 
-    private static float wrapDegrees(float value) {
-        value %= 360.0F;
-        if (value >= 180.0F) value -= 360.0F;
-        if (value < -180.0F) value += 360.0F;
-        return value;
-    }
-
-    private static float clamp(float value, float min, float max) {
-        if (value < min) return min;
-        if (value > max) return max;
-        return value;
+    static class SensUtils {
+        static float getGCDValue(MinecraftClient client) {
+            double sens = client.options.getMouseSensitivity().getValue();
+            float gcd = (float) (sens * 0.6 + 0.2);
+            gcd = gcd * gcd * gcd * 8.0f;
+            return gcd;
+        }
     }
 }
