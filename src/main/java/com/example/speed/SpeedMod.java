@@ -29,13 +29,14 @@ public class SpeedMod implements ModInitializer {
     private static Vector2f rotateVector = new Vector2f(0, 0);
 
     private static final float RANGE = 4.2f;
-    private static final float MIN_CPS = 6.5f;
-    private static final float MAX_CPS = 9.5f;
+    // Новая задержка: от 820 до 930 миллисекунд
+    private static final long MIN_DELAY_MS = 820;
+    private static final long MAX_DELAY_MS = 930;
     private static final boolean CORRECTION_MOTION = true;
 
     @Override
     public void onInitialize() {
-        LOGGER.info("[SpeedMod] RW mode. Press R ONCE to toggle on/off.");
+        LOGGER.info("[SpeedMod] RW mode. Delay 0.82-0.93 sec. Press R ONCE to toggle.");
 
         Thread tickThread = new Thread(() -> {
             while (true) {
@@ -47,18 +48,16 @@ public class SpeedMod implements ModInitializer {
                     long window = client.getWindow().getHandle();
                     boolean currentR = GLFW.glfwGetKey(window, GLFW.GLFW_KEY_R) == GLFW.GLFW_PRESS;
 
-                    // Однократное нажатие (по фронту сигнала)
                     if (currentR && !lastRState) {
                         enabled = !enabled;
                         if (enabled) {
-                            LOGGER.info("[Killaura] ENABLED (single press)");
-                            // Инициализируем rotateVector текущими углами
+                            LOGGER.info("[Killaura] ENABLED (delay 0.82-0.93s)");
                             rotateVector = new Vector2f(client.player.getYaw(), client.player.getPitch());
                         } else {
                             LOGGER.info("[Killaura] DISABLED");
                             target = null;
                         }
-                        Thread.sleep(150); // антидребезг
+                        Thread.sleep(150);
                     }
                     lastRState = currentR;
 
@@ -79,9 +78,11 @@ public class SpeedMod implements ModInitializer {
         if (target == null) return;
 
         long now = System.currentTimeMillis();
-        attackTimes.removeIf(t -> now - t > 1000);
-        float targetCps = MIN_CPS + random.nextFloat() * (MAX_CPS - MIN_CPS);
-        long delay = (long) (1000.0 / targetCps);
+        // Очищаем старые времена (не обязательно, но оставим)
+        attackTimes.removeIf(t -> now - t > 2000);
+
+        // Выбираем случайную задержку от MIN_DELAY_MS до MAX_DELAY_MS
+        long delay = MIN_DELAY_MS + (long)(random.nextDouble() * (MAX_DELAY_MS - MIN_DELAY_MS));
         if (now - lastAttackTime < delay) return;
 
         rotateAndAttack(client);
@@ -126,7 +127,7 @@ public class SpeedMod implements ModInitializer {
         float basePitchSpeed = 44.0f;
 
         float newYaw, newPitch;
-        boolean attack = true; // всегда атакуем
+        boolean attack = true;
 
         if (attack && target != null) {
             float snapFactor = 0.88f + (Math.min(Math.abs(yawDelta1) / 90.0f, 1.0f) * 0.12f);
