@@ -4,7 +4,6 @@ import net.fabricmc.api.ModInitializer;
 import net.minecraft.client.MinecraftClient;
 import net.minecraft.client.gui.DrawContext;
 import net.minecraft.client.gui.screen.Screen;
-import net.minecraft.client.gui.widget.TextFieldWidget;
 import net.minecraft.text.Text;
 import org.lwjgl.glfw.GLFW;
 
@@ -36,8 +35,6 @@ public class SpeedMod implements ModInitializer {
     static class LinxesGUI extends Screen {
         private int selectedCategory = 0;
         private int scrollOffset = 0;
-        private TextFieldWidget searchBox;
-        private String filter = "";
         private static final int WIN_W = 360;
         private static final int WIN_H = 260;
         private int winX, winY;
@@ -73,24 +70,17 @@ public class SpeedMod implements ModInitializer {
             super.init();
             winX = (width - WIN_W) / 2;
             winY = (height - WIN_H) / 2;
-            searchBox = new TextFieldWidget(textRenderer, winX + 10, winY + 35, 150, 16, Text.literal("Search..."));
-            searchBox.setMaxLength(50);
-            searchBox.setDrawsBackground(true);
-            searchBox.setPlaceholder(Text.literal("Search..."));
-            addSelectableChild(searchBox);
         }
 
         @Override
         public void render(DrawContext ctx, int mouseX, int mouseY, float delta) {
-            // Блюр убран – фон не затемняется, окно рисуется прямо на игровом экране
-
-            // окно с закруглёнными углами
+            // Окно с закруглёнными углами
             fillRounded(ctx, winX, winY, WIN_W, WIN_H, 12, 0xEE1E1E1E);
 
-            // заголовок "Linxes"
+            // Заголовок "Linxes"
             ctx.drawCenteredTextWithShadow(textRenderer, Text.literal("Linxes"), winX + WIN_W / 2, winY + 8, 0xFFFFFF);
 
-            // категории
+            // Категории (горизонтальные)
             int catX = winX + 10;
             int catY = winY + 32;
             int catW = 56;
@@ -106,28 +96,22 @@ public class SpeedMod implements ModInitializer {
                 }
             }
 
-            // поиск
-            searchBox.render(ctx, mouseX, mouseY, delta);
-
-            // список модулей
+            // Список модулей
             int listX = winX + 10;
-            int listY = winY + 65;
+            int listY = winY + 55;
             int listW = WIN_W - 20;
-            int listH = WIN_H - 85;
+            int listH = WIN_H - 75;
             ctx.enableScissor(listX, listY, listX + listW, listY + listH);
 
-            List<ModuleEntry> base = modules.get(categories.get(selectedCategory));
-            if (base != null) {
-                List<ModuleEntry> filtered = base.stream()
-                        .filter(e -> e.name.toLowerCase().contains(filter.toLowerCase()))
-                        .collect(Collectors.toList());
+            List<ModuleEntry> modList = modules.get(categories.get(selectedCategory));
+            if (modList != null) {
                 int itemH = 36;
                 int visible = listH / itemH;
-                int maxOff = Math.max(0, filtered.size() - visible);
-                scrollOffset = Math.max(0, Math.min(scrollOffset, maxOff));
+                int maxScroll = Math.max(0, modList.size() - visible);
+                scrollOffset = Math.max(0, Math.min(scrollOffset, maxScroll));
 
-                for (int i = 0; i < visible && scrollOffset + i < filtered.size(); i++) {
-                    ModuleEntry entry = filtered.get(scrollOffset + i);
+                for (int i = 0; i < visible && scrollOffset + i < modList.size(); i++) {
+                    ModuleEntry entry = modList.get(scrollOffset + i);
                     int y = listY + i * itemH;
                     boolean hover = mouseX >= listX && mouseX <= listX + listW && mouseY >= y && mouseY <= y + itemH;
                     if (hover) {
@@ -139,7 +123,7 @@ public class SpeedMod implements ModInitializer {
             }
             ctx.disableScissor();
 
-            // нижняя строка (можно изменить на что-то своё или оставить)
+            // Нижняя строка
             ctx.drawCenteredTextWithShadow(textRenderer, Text.literal("Linxes Client"), winX + WIN_W / 2, winY + WIN_H - 12, 0xAAAAAA);
 
             super.render(ctx, mouseX, mouseY, delta);
@@ -184,33 +168,24 @@ public class SpeedMod implements ModInitializer {
         }
 
         @Override
+        public boolean mouseScrolled(double mx, double my, double horiz, double vert) {
+            int delta = (int) Math.signum(vert);
+            List<ModuleEntry> modList = modules.get(categories.get(selectedCategory));
+            if (modList != null) {
+                int visible = (WIN_H - 75) / 36;
+                int maxScroll = Math.max(0, modList.size() - visible);
+                scrollOffset = Math.max(0, Math.min(scrollOffset - delta, maxScroll));
+            }
+            return true;
+        }
+
+        @Override
         public boolean keyPressed(int code, int scan, int mods) {
             if (code == GLFW.GLFW_KEY_ESCAPE || code == GLFW.GLFW_KEY_RIGHT_SHIFT) {
                 close();
                 return true;
             }
-            if (searchBox.isFocused()) {
-                boolean handled = searchBox.keyPressed(code, scan, mods);
-                filter = searchBox.getText();
-                scrollOffset = 0;
-                return handled;
-            }
             return super.keyPressed(code, scan, mods);
-        }
-
-        @Override
-        public boolean mouseScrolled(double mx, double my, double horiz, double vert) {
-            int delta = (int) Math.signum(vert);
-            List<ModuleEntry> base = modules.get(categories.get(selectedCategory));
-            if (base != null) {
-                List<ModuleEntry> filtered = base.stream()
-                        .filter(e -> e.name.toLowerCase().contains(filter.toLowerCase()))
-                        .collect(Collectors.toList());
-                int visible = (WIN_H - 85) / 36;
-                int maxOff = Math.max(0, filtered.size() - visible);
-                scrollOffset = Math.max(0, Math.min(scrollOffset - delta, maxOff));
-            }
-            return true;
         }
 
         @Override
