@@ -25,17 +25,20 @@ public class SpeedMod implements ModInitializer {
     private static final ConcurrentLinkedQueue<Long> attackTimes = new ConcurrentLinkedQueue<>();
     private static final Random random = new Random();
 
-    private static float lastYaw, lastPitch;
-    private static Vector2f rotateVector = new Vector2f(0, 0);
+    // Для плавного доворота (без дёрганья)
+    private static float targetYaw = 0;
+    private static float targetPitch = 0;
+    private static boolean hasTargetAngles = false;
+    private static long lastMouseMoveTime = 0;
 
-    private static final float RANGE = 4.2f;
+    private static final float RANGE = 4.5f;          // увеличен для бега
     private static final long MIN_DELAY_MS = 820;
     private static final long MAX_DELAY_MS = 930;
-    private static final boolean CORRECTION_MOTION = true;
+    private static final float SMOOTH_FACTOR = 0.05f; // очень плавно (5% за тик)
 
     @Override
     public void onInitialize() {
-        LOGGER.info("[SpeedMod] RW mode. Delay 0.82-0.93 sec. Press R ONCE to toggle.");
+        LOGGER.info("[SpeedMod] Smooth killaura, no aim jerk. Press R to toggle.");
 
         Thread tickThread = new Thread(() -> {
             while (true) {
@@ -50,8 +53,8 @@ public class SpeedMod implements ModInitializer {
                     if (currentR && !lastRState) {
                         enabled = !enabled;
                         if (enabled) {
-                            LOGGER.info("[Killaura] ENABLED (delay 0.82-0.93s)");
-                            rotateVector = new Vector2f(client.player.getYaw(), client.player.getPitch());
+                            LOGGER.info("[Killaura] ENABLED (smooth, no jerk)");
+                            hasTargetAngles = false;
                         } else {
                             LOGGER.info("[Killaura] DISABLED");
                             target = null;
@@ -73,15 +76,27 @@ public class SpeedMod implements ModInitializer {
     }
 
     private static void tick(MinecraftClient client) {
+        // Обновляем цель
         updateTarget(client);
-        if (target == null) return;
+        if (target == null) {
+            hasTargetAngles = false;
+            return;
+        }
 
+        // Плавное наведение (без захвата мыши)
+        smoothAim(client);
+
+        // Атака с задержкой
         long now = System.currentTimeMillis();
-        attackTimes.removeIf(t -> now - t > 2000);
         long delay = MIN_DELAY_MS + (long)(random.nextDouble() * (MAX_DELAY_MS - MIN_DELAY_MS));
         if (now - lastAttackTime < delay) return;
 
-        rotateAndAttack(client);
+        // Удар с сохранением спринта
+        boolean wasSprinting = client.player.isSprinting();
+        client.interactionManager.attackEntity(client.player, target);
+        if (wasSprinting) client.player.setSprinting(true);
+        client.player.setSprinting(true); // форсируем для надёжности
+
         lastAttackTime = now;
         attackTimes.add(now);
     }
@@ -97,7 +112,8 @@ public class SpeedMod implements ModInitializer {
         for (Entity e : entities) {
             if (e instanceof PlayerEntity && client.player.isTeammate((PlayerEntity) e)) continue;
             double dist = client.player.squaredDistanceTo(e);
-            if (dist < closest && client.player.canSee(e)) {
+            // Убираем проверку canSee для бега – атакуем даже через стены (но можно вернуть)
+            if (dist < closest) {
                 closest = dist;
                 best = e;
             }
@@ -105,123 +121,71 @@ public class SpeedMod implements ModInitializer {
         target = best;
     }
 
-    private static void rotateAndAttack(MinecraftClient client) {
+    private static void smoothAim(MinecraftClient client) {
         if (target == null) return;
 
+        // Получаем идеальный угол на цель
         Vec3d eyePos = client.player.getEyePos();
         Vec3d targetVec = target.getBoundingBox().getCenter().subtract(eyePos);
         double hyp = Math.hypot(targetVec.x, targetVec.z);
+        float idealYaw = (float) Math.toDegrees(Math.atan2(targetVec.z, targetVec.x)) - 90;
+        float idealPitch = (float) -Math.toDegrees(Math.atan2(targetVec.y, hyp));
+        idealYaw = wrapDegrees(idealYaw);
+        idealPitch = clamp(idealPitch, -89, 89);
 
-        // Исправлено: приведение к float перед вызовом wrapDegrees
-        float targetYaw = (float) MathHelper.wrapDegrees((float)(Math.toDegrees(Math.atan2(targetVec.z, targetVec.x)) - 90));
-        float targetPitch = (float) (-Math.toDegrees(Math.atan2(targetVec.y, hyp)));
-        targetPitch = MathHelper.clamp(targetPitch, -89.0F, 89.0F);
-
-        float yawDelta1 = MathHelper.wrapDegrees(targetYaw - rotateVector.x);
-        float pitchDelta1 = MathHelper.wrapDegrees(targetPitch - rotateVector.y);
-
-        float baseYawSpeed = 52.0f;
-        float basePitchSpeed = 44.0f;
-
-        float newYaw, newPitch;
-        boolean attack = true;
-
-        if (attack && target != null) {
-            float snapFactor = 0.88f + (Math.min(Math.abs(yawDelta1) / 90.0f, 1.0f) * 0.12f);
-            newYaw = rotateVector.x + yawDelta1 * snapFactor;
-            newPitch = rotateVector.y + pitchDelta1 * snapFactor;
-        } else {
-            float yawSpeed = Math.min(Math.abs(yawDelta1), baseYawSpeed);
-            float pitchSpeed = Math.min(Math.abs(pitchDelta1), basePitchSpeed);
-            newYaw = rotateVector.x + (yawDelta1 > 0 ? yawSpeed : -yawSpeed);
-            newPitch = rotateVector.y + (pitchDelta1 > 0 ? pitchSpeed : -pitchSpeed);
+        // Если мы не инициализировали целевые углы – берём текущие как базу
+        if (!hasTargetAngles) {
+            targetYaw = client.player.getYaw();
+            targetPitch = client.player.getPitch();
+            hasTargetAngles = true;
         }
 
-        long time = System.currentTimeMillis();
-        float timeFactor = time * 0.001f;
-        int age = client.player.age;
-
-        if (age % (3 + (int)(Math.sin(timeFactor) * 2)) == 0) {
-            float shakeIntensity = 0.12f + (float) Math.sin(timeFactor * 2.5f) * 0.06f;
-            newYaw += (random.nextFloat() - 0.5f) * shakeIntensity;
-            newPitch += (random.nextFloat() - 0.5f) * shakeIntensity * 0.8f;
+        // Обнаружение активного движения мышью (чтобы не мешать игроку)
+        float yawDiff = Math.abs(wrapDegrees(idealYaw - client.player.getYaw()));
+        float pitchDiff = Math.abs(idealPitch - client.player.getPitch());
+        if (yawDiff > 15.0f || pitchDiff > 10.0f) {
+            // Игрок сам сильно крутит – не мешаем, просто запоминаем текущую цель
+            targetYaw = client.player.getYaw();
+            targetPitch = client.player.getPitch();
+            return;
         }
 
-        newYaw += (random.nextFloat() - 0.5f) * 0.018f;
-        newPitch += (random.nextFloat() - 0.5f) * 0.014f;
+        // Плавное смещение целевых углов к идеальным (очень медленно)
+        float yawDelta = wrapDegrees(idealYaw - targetYaw);
+        float pitchDelta = idealPitch - targetPitch;
+        targetYaw += yawDelta * SMOOTH_FACTOR;
+        targetPitch += pitchDelta * SMOOTH_FACTOR;
+        targetYaw = wrapDegrees(targetYaw);
+        targetPitch = clamp(targetPitch, -89, 89);
 
-        float gcd = SensUtils.getGCDValue(client);
-        float gcdVariation = 0.985f + (random.nextFloat() * 0.03f);
-        newYaw -= (newYaw - rotateVector.x) % (gcd * gcdVariation);
-        newPitch -= (newPitch - rotateVector.y) % (gcd * gcdVariation * 0.95f);
-
-        float maxChange = attack ? 38.0f : 28.0f;
-        newYaw = rotateVector.x + MathHelper.clamp(newYaw - rotateVector.x, -maxChange, maxChange);
-        newPitch = rotateVector.y + MathHelper.clamp(newPitch - rotateVector.y, -maxChange * 0.85f, maxChange * 0.85f);
-
-        newPitch = MathHelper.clamp(newPitch, -89.0F, 89.0F);
-
-        float smoothFactor = 0.78f + (random.nextFloat() * 0.22f);
-        newYaw = rotateVector.x + (newYaw - rotateVector.x) * smoothFactor;
-        newPitch = rotateVector.y + (newPitch - rotateVector.y) * smoothFactor;
-
-        rotateVector = new Vector2f(newYaw, newPitch);
-
-        if (CORRECTION_MOTION) {
-            client.player.bodyYaw = newYaw;
-            client.player.headYaw = newYaw;
-            // renderYawOffset отсутствует в ClientPlayerEntity в 1.21.4, используем bodyYaw
-            if (age % 8 == 0) {
-                client.player.headYaw += (random.nextFloat() - 0.5f) * 0.6f;
-            }
+        // Применяем к игроку – но так как скорость маленькая, мышь не блокируется
+        client.player.setYaw(targetYaw);
+        client.player.setPitch(targetPitch);
+        // Синхронизируем тело и голову для обхода античитов
+        client.player.bodyYaw = targetYaw;
+        client.player.headYaw = targetYaw;
+        if (client.player.age % 8 == 0) {
+            client.player.headYaw += (random.nextFloat() - 0.5f) * 0.6f;
         }
 
-        lastYaw = newYaw;
-        lastPitch = newPitch;
-
-        if (time % 2000 < 100) {
-            float randomizer = 0.9f + (random.nextFloat() * 0.2f);
-            rotateVector = new Vector2f(
-                rotateVector.x * randomizer,
-                MathHelper.clamp(rotateVector.y * randomizer, -89.0F, 89.0F)
-            );
-        }
-
-        client.player.setYaw(rotateVector.x);
-        client.player.setPitch(rotateVector.y);
-
-        boolean wasSprinting = client.player.isSprinting();
-        client.interactionManager.attackEntity(client.player, target);
-        if (wasSprinting) client.player.setSprinting(true);
-        client.player.setSprinting(true);
+        // Добавляем микро-шум (для натуральности)
+        float noiseYaw = (random.nextFloat() - 0.5f) * 0.018f;
+        float noisePitch = (random.nextFloat() - 0.5f) * 0.014f;
+        client.player.setYaw(targetYaw + noiseYaw);
+        client.player.setPitch(targetPitch + noisePitch);
     }
 
-    // ====== Вспомогательные классы ======
-    static class Vector2f {
-        float x, y;
-        Vector2f(float x, float y) { this.x = x; this.y = y; }
+    // Вспомогательные методы
+    private static float wrapDegrees(float value) {
+        value %= 360.0F;
+        if (value >= 180.0F) value -= 360.0F;
+        if (value < -180.0F) value += 360.0F;
+        return value;
     }
 
-    static class MathHelper {
-        static float wrapDegrees(float value) {
-            value %= 360.0F;
-            if (value >= 180.0F) value -= 360.0F;
-            if (value < -180.0F) value += 360.0F;
-            return value;
-        }
-        static float clamp(float value, float min, float max) {
-            if (value < min) return min;
-            if (value > max) return max;
-            return value;
-        }
-    }
-
-    static class SensUtils {
-        static float getGCDValue(MinecraftClient client) {
-            double sens = client.options.getMouseSensitivity().getValue();
-            float gcd = (float) (sens * 0.6 + 0.2);
-            gcd = gcd * gcd * gcd * 8.0f;
-            return gcd;
-        }
+    private static float clamp(float value, float min, float max) {
+        if (value < min) return min;
+        if (value > max) return max;
+        return value;
     }
 }
