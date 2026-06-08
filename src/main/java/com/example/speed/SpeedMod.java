@@ -20,7 +20,6 @@ import java.util.concurrent.ConcurrentLinkedQueue;
 public class SpeedMod implements ModInitializer {
     public static final Logger LOGGER = LoggerFactory.getLogger("speedmod");
 
-    // ---------- состояние ----------
     private static boolean enabled = false;
     private static boolean lastRState = false;
     private static Entity target = null;
@@ -28,28 +27,26 @@ public class SpeedMod implements ModInitializer {
     private static final ConcurrentLinkedQueue<Long> attackTimes = new ConcurrentLinkedQueue<>();
     private static final Random random = new Random();
 
-    // ---------- переменные из case "RW" ----------
     private static float lastYaw = 0, lastPitch = 0;
     private static Vector2f rotateVector = new Vector2f(0, 0);
     private static boolean rotateVectorInit = false;
 
-    // ---------- переменные для обходов funtimeSnap / lonyJir ----------
+    // для обходов
     private static float shakeTime = 0;
     private static float acceleration = 0;
     private static boolean isBack = false;
-    private static boolean funtimeSnapMode = true;  // можно переключать, но для обхода оставим true
-    private static boolean lonyJirMode = true;      // второй режим тоже активен – можно комбинировать
+    private static boolean funtimeSnapMode = true;
+    private static boolean lonyJirMode = true;
 
-    // настройки (подгони под себя)
     private static final float RANGE = 4.2f;
     private static final long MIN_DELAY_MS = 820;
     private static final long MAX_DELAY_MS = 930;
-    private static final float SHAKE_SPEED = 0.08f;      // аналог shakeSpeed.getCurrent()
-    private static final float SHAKE_INTENSITY = 0.12f;  // аналог shakeIntensity.getCurrent()
+    private static final float SHAKE_SPEED = 0.08f;
+    private static final float SHAKE_INTENSITY = 0.12f;
 
     @Override
     public void onInitialize() {
-        LOGGER.info("[SWILL] Killaura RW + funtimeSnap + lonyJir + Matrix/Grim bypasses. Press R.");
+        LOGGER.info("[SWILL] Killaura RW + Matrix/Grim bypasses (fixed). Press R.");
         Thread tickThread = new Thread(() -> {
             while (true) {
                 try {
@@ -80,7 +77,6 @@ public class SpeedMod implements ModInitializer {
             return;
         }
 
-        // 1. Вычисляем идеальные углы на цель
         Vec3d eyePos = client.player.getEyePos();
         Vec3d targetVec = target.getBoundingBox().getCenter().subtract(eyePos);
         double hyp = Math.hypot(targetVec.x, targetVec.z);
@@ -97,21 +93,18 @@ public class SpeedMod implements ModInitializer {
             rotateVectorInit = true;
         }
 
-        // 2. Применяем оба режима ротации (funtimeSnap + lonyJir) – комбинируем логику
         float newYaw = rotateVector.x;
         float newPitch = rotateVector.y;
 
-        // ----- режим funtimeSnap (с шумом и GCD) -----
+        // ----- funtimeSnap -----
         if (funtimeSnapMode) {
             float deltaYaw = wrapDegrees(idealYaw - lastYaw);
             float deltaPitch = idealPitch - lastPitch;
             float smooth = lastYaw + deltaYaw;
             float newYawTemp = lastPitch + deltaPitch;
-            // GCD округление
             float gcd = getGCD(client);
             smooth -= (smooth - lastYaw) % gcd;
             newYawTemp -= (newYawTemp - lastPitch) % gcd;
-            // шум
             shakeTime += SHAKE_SPEED * 0.05f;
             float intensity = SHAKE_INTENSITY;
             float shakeYaw   = (float)(Math.sin(shakeTime * 1.7)  * intensity * 0.5);
@@ -122,10 +115,9 @@ public class SpeedMod implements ModInitializer {
             lastPitch = newYawTemp;
         }
 
-        // ----- режим lonyJir (адаптивное ускорение, Raycast, обработка планирования, третье лицо) -----
+        // ----- lonyJir (адаптивное ускорение, симуляция планирования, третье лицо) -----
         if (lonyJirMode && target != null) {
             MinecraftClient mc = client;
-            // элитра/планирование
             if (mc.player.isGliding()) {
                 if (!isBack) {
                     acceleration += 0.005f;
@@ -135,8 +127,8 @@ public class SpeedMod implements ModInitializer {
                     if (acceleration <= -0.02f) isBack = false;
                 }
             } else {
-                // Raycast проверка видимости (обход через ускорение)
-                if (!canSeeEntity(mc, target)) {
+                // простая проверка видимости (вместо сложного Raycast)
+                if (!mc.player.canSee(target)) {
                     acceleration += 0.0015f;
                 } else if (acceleration > 0.0f) {
                     acceleration -= 0.01f;
@@ -150,36 +142,31 @@ public class SpeedMod implements ModInitializer {
             float gcd2 = getGCD(mc);
             newYawL -= (newYawL - newYaw) % gcd2;
             newPitchL -= (newPitchL - newPitch) % gcd2;
-            // учёт третьего лица (камера спереди)
+
+            // обработка третьего лица (камера спереди)
             float deltaYawCam = wrapDegrees(mc.gameRenderer.getCamera().getYaw() - newYawL);
             float deltaPitchCam = mc.gameRenderer.getCamera().getPitch() - newPitchL;
             if (mc.options.getPerspective() == Perspective.THIRD_PERSON_FRONT) {
                 deltaYawCam = wrapDegrees(mc.gameRenderer.getCamera().getYaw() - 180.0f - newYawL);
                 deltaPitchCam = -mc.gameRenderer.getCamera().getPitch() - newPitchL;
             }
-            // условное ограничение: если игрок сам активно крутит камерой (>3°) – отключаем silent поворот
-            float limitYaw = (Math.abs(deltaYawCam) > 3.0f || Math.abs(deltaPitchCam) > 3.0f) ? 0.0f : 360.0f;
-            float limitPitch = limitYaw;
-            // отправка серверу (Silent Aim)
-            sendSilentLook(client, newYawL, newPitchL, limitYaw, limitPitch);
+            float limit = (Math.abs(deltaYawCam) > 3.0f || Math.abs(deltaPitchCam) > 3.0f) ? 0.0f : 360.0f;
+            sendSilentLook(client, newYawL, newPitchL, limit, limit);
             newYaw = newYawL;
             newPitch = newPitchL;
         } else {
-            // если lonyJir выключен – отправляем обычный silent look с полным лимитом
             sendSilentLook(client, newYaw, newPitch, 360.0f, 360.0f);
         }
 
-        // сохраняем в rotateVector
         rotateVector.x = newYaw;
         rotateVector.y = newPitch;
-        // коррекция движения (обход Matrix/Grim)
+        // коррекция движения (обход)
         client.player.bodyYaw = newYaw;
         client.player.headYaw = newYaw;
         if (client.player.age % 8 == 0) {
             client.player.headYaw += (random.nextFloat() - 0.5f) * 0.6f;
         }
 
-        // 3. Атака с задержкой
         long now = System.currentTimeMillis();
         long delay = MIN_DELAY_MS + (long)(random.nextDouble() * (MAX_DELAY_MS - MIN_DELAY_MS));
         if (now - lastAttackTime >= delay) {
@@ -212,15 +199,8 @@ public class SpeedMod implements ModInitializer {
         target = best;
     }
 
-    private static boolean canSeeEntity(MinecraftClient client, Entity entity) {
-        Vec3d from = client.player.getEyePos();
-        Vec3d to = entity.getBoundingBox().getCenter();
-        return client.world.raycastBlock(from, to, net.minecraft.util.hit.BlockHitResult::new, net.minecraft.util.shape.VoxelShapes.fullCube(), from, to) == null;
-    }
-
     private static void sendSilentLook(MinecraftClient client, float yaw, float pitch, float limitYaw, float limitPitch) {
         if (client.getNetworkHandler() == null) return;
-        // ограничиваем максимальное изменение угла за пакет (обход Matrix/Grim)
         float clampedYaw = yaw;
         float clampedPitch = pitch;
         if (limitYaw < 360.0f) {
@@ -257,7 +237,6 @@ public class SpeedMod implements ModInitializer {
         return value;
     }
 
-    // вспомогательный класс для вектора (как в оригинале)
     static class Vector2f {
         float x, y;
         Vector2f(float x, float y) { this.x = x; this.y = y; }
