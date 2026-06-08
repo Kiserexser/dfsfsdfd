@@ -1,6 +1,7 @@
 package com.example.speed;
 
 import net.fabricmc.api.ModInitializer;
+import net.minecraft.block.Blocks;
 import net.minecraft.client.MinecraftClient;
 import net.minecraft.text.Text;
 import org.lwjgl.glfw.GLFW;
@@ -34,24 +35,27 @@ public class SpeedMod implements ModInitializer {
         }).start();
     }
 
+    private static boolean isInWeb() {
+        if (mc.player == null || mc.world == null) return false;
+        var blockPos = mc.player.getBlockPos();
+        return mc.world.getBlockState(blockPos).getBlock() == Blocks.COBWEB ||
+               mc.world.getBlockState(blockPos.down()).getBlock() == Blocks.COBWEB;
+    }
+
     private void handleWebFly() {
         if (mc.player == null) return;
 
-        // Проверяем, находится ли игрок в паутине
-        boolean inWeb = mc.player.isInWeb();
+        boolean inWeb = isInWeb();
 
         if (inWeb) {
-            // Каждый 1-2 тика даём импульс вверх (рандом, чтобы не палиться)
             if (tickCounter % (1 + (int)(Math.random() * 2)) == 0) {
                 mc.player.addVelocity(0, 0.42, 0);
             }
-            // Автоматически включаем спринт и прыжок для лучшего эффекта
             mc.player.setSprinting(true);
             if (mc.options.jumpKey.isPressed()) {
                 mc.player.jump();
             }
         } else {
-            // Если не в паутине, но игрок в воздухе – немного замедляем падение (опционально)
             if (!mc.player.isOnGround() && mc.player.getVelocity().y < -0.1) {
                 mc.player.addVelocity(0, 0.04, 0);
             }
