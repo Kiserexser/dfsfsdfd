@@ -18,13 +18,11 @@ import org.slf4j.LoggerFactory;
 import java.util.List;
 import java.util.Random;
 import java.util.concurrent.ConcurrentLinkedQueue;
-import java.util.stream.Collectors;
 import java.util.concurrent.atomic.AtomicLong;
 
 public class SpeedMod implements ModInitializer {
     public static final Logger LOGGER = LoggerFactory.getLogger("speedmod");
     
-    // ---------- RW State ----------
     private static boolean enabled = false;
     private static boolean lastRState = false;
     private static Entity target = null;
@@ -32,31 +30,24 @@ public class SpeedMod implements ModInitializer {
     private static final ConcurrentLinkedQueue<Long> attackTimes = new ConcurrentLinkedQueue<>();
     private static final Random random = new Random();
     
-    // ---------- Rotation & Timing ----------
     private static float lastYaw = 0, lastPitch = 0;
     private static Vector2f rotateVector = new Vector2f(0, 0);
     private static boolean rotateVectorInit = false;
     private static float shakeTime = 0;
     private static float acceleration = 0;
     private static boolean isBack = false;
-    private static final AtomicLong lastTeleportTime = new AtomicLong(0);
     
-    // ---------- RW Config ----------
-    private static final float RANGE = 4.15f;          // RW Reach проверки ±
-    private static final long MIN_DELAY_MS = 820;      // 0.82 сек
-    private static final long MAX_DELAY_MS = 930;      // 0.93 сек
+    private static final float RANGE = 4.15f;
+    private static final long MIN_DELAY_MS = 820;
+    private static final long MAX_DELAY_MS = 930;
     private static final float SHAKE_SPEED = 0.08f;
     private static final float SHAKE_INTENSITY = 0.12f;
-    private static final int MAX_PACKETS_PER_SECOND = 12;
     
-    // RW обходы (bypass)
     private static final boolean BYPASS_MATRIX_ROT = true;
     private static final boolean BYPASS_GRIM_TIMING = true;
     private static final boolean BYPASS_RW_DECOY = true;
     private static final boolean BYPASS_RW_FAKE_LAG = true;
     private static final boolean BYPASS_MATRIX_VELOCITY = true;
-    private static final boolean BYPASS_GRIM_PACKET_SPAM = true;
-    private static final boolean BYPASS_RW_AIM_ASSIST = true;
     private static final boolean BYPASS_RW_NAME_FILTER = true;
     
     @Override
@@ -65,13 +56,11 @@ public class SpeedMod implements ModInitializer {
         Thread tickThread = new Thread(() -> {
             while (true) {
                 try {
-                    // 1. Timer Desync (49-53ms вместо 50)
                     Thread.sleep(49 + random.nextInt(5));
                     MinecraftClient client = MinecraftClient.getInstance();
                     if (client.player == null || client.world == null) continue;
                     long window = client.getWindow().getHandle();
                     boolean currentR = GLFW.glfwGetKey(window, GLFW.GLFW_KEY_R) == GLFW.GLFW_PRESS;
-                    
                     if (currentR && !lastRState) {
                         enabled = !enabled;
                         LOGGER.info(enabled ? "[RW] KillAura ON" : "[RW] KillAura OFF");
@@ -80,7 +69,9 @@ public class SpeedMod implements ModInitializer {
                     }
                     lastRState = currentR;
                     if (enabled) tick(client);
-                } catch (InterruptedException e) { break; }
+                } catch (InterruptedException e) {
+                    break;
+                }
             }
         });
         tickThread.setDaemon(true);
@@ -94,11 +85,9 @@ public class SpeedMod implements ModInitializer {
             return;
         }
         
-        // 2. Decoy Filter (RW honeypot)
         if (BYPASS_RW_DECOY && isRWDecoy(target)) return;
         if (BYPASS_RW_NAME_FILTER && isRWBot(target)) return;
         
-        // 3. Calculate ideal angles
         Vec3d eyePos = client.player.getEyePos();
         Vec3d targetVec = target.getBoundingBox().getCenter().subtract(eyePos);
         double hyp = Math.hypot(targetVec.x, targetVec.z);
@@ -118,7 +107,6 @@ public class SpeedMod implements ModInitializer {
         float newYaw = rotateVector.x;
         float newPitch = rotateVector.y;
         
-        // 4. funtimeSnap (Matrix/Grim Rotation Bypass)
         if (BYPASS_MATRIX_ROT) {
             float deltaYaw = wrapDegrees(idealYaw - lastYaw);
             float deltaPitch = idealPitch - lastPitch;
@@ -137,7 +125,6 @@ public class SpeedMod implements ModInitializer {
             lastPitch = newYawTemp;
         }
         
-        // 5. lonyJir (Adaptive Acceleration for RW)
         if (BYPASS_GRIM_TIMING && target != null) {
             MinecraftClient mc = client;
             if (mc.player.isGliding()) {
@@ -164,7 +151,6 @@ public class SpeedMod implements ModInitializer {
             newYawL -= (newYawL - newYaw) % gcd2;
             newPitchL -= (newPitchL - newPitch) % gcd2;
             
-            // Camera perspective handling
             float deltaYawCam = wrapDegrees(mc.gameRenderer.getCamera().getYaw() - newYawL);
             float deltaPitchCam = mc.gameRenderer.getCamera().getPitch() - newPitchL;
             if (mc.options.getPerspective() == Perspective.THIRD_PERSON_FRONT) {
@@ -179,7 +165,6 @@ public class SpeedMod implements ModInitializer {
             sendSilentLook(client, newYaw, newPitch, 360.0f, 360.0f);
         }
         
-        // 6. Apply final rotation
         rotateVector.x = newYaw;
         rotateVector.y = newPitch;
         client.player.bodyYaw = newYaw;
@@ -188,37 +173,32 @@ public class SpeedMod implements ModInitializer {
             client.player.headYaw += (random.nextFloat() - 0.5f) * 0.6f;
         }
         
-        // 7. Attack with RW Timing
         long now = System.currentTimeMillis();
         long delay = MIN_DELAY_MS + (long)(random.nextDouble() * (MAX_DELAY_MS - MIN_DELAY_MS));
+        
         if (BYPASS_RW_FAKE_LAG && random.nextFloat() < 0.15f) {
-            // Fake lag spike
-            Thread.sleep(random.nextInt(45));
+            try {
+                Thread.sleep(random.nextInt(45));
+            } catch (InterruptedException ignored) {}
         }
+        
         if (now - lastAttackTime < delay) return;
         
-        // 8. Pre-attack onGround bypass (Matrix)
         if (BYPASS_MATRIX_VELOCITY) {
             sendOnGroundPacket(client);
         }
         
-        // 9. Attack
         boolean wasSprinting = client.player.isSprinting();
         client.interactionManager.attackEntity(client.player, target);
         if (wasSprinting) client.player.setSprinting(true);
         client.player.setSprinting(true);
         
-        // 10. Post-attack swing randomization (Grim)
-        if (BYPASS_GRIM_PACKET_SPAM) {
-            long swingDelay = 30 + random.nextInt(50);
-            client.getNetworkHandler().sendPacket(new HandSwingC2SPacket(Hand.MAIN_HAND));
-        }
+        client.getNetworkHandler().sendPacket(new HandSwingC2SPacket(Hand.MAIN_HAND));
         
         lastAttackTime = now;
         attackTimes.add(now);
     }
     
-    // ---------- Target Selection ----------
     private static void updateTarget(MinecraftClient client) {
         if (target != null && target.isAlive() && client.player.squaredDistanceTo(target) <= RANGE * RANGE) {
             return;
@@ -239,7 +219,6 @@ public class SpeedMod implements ModInitializer {
         target = best;
     }
     
-    // ---------- RW Specific Filters ----------
     private static boolean isRWDecoy(Entity e) {
         String name = e.getCustomName() != null ? e.getCustomName().getString().toLowerCase() : "";
         if (name.contains("decoy") || name.contains("antibot") || name.contains("fake")) return true;
@@ -255,7 +234,6 @@ public class SpeedMod implements ModInitializer {
         return false;
     }
     
-    // ---------- Packet Helpers ----------
     private static void sendSilentLook(MinecraftClient client, float yaw, float pitch, float limitYaw, float limitPitch) {
         if (client.getNetworkHandler() == null) return;
         float clampedYaw = yaw;
