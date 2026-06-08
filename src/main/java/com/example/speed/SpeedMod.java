@@ -2,27 +2,10 @@ package com.example.speed;
 
 import net.fabricmc.api.ModInitializer;
 import net.minecraft.client.MinecraftClient;
-import net.minecraft.client.option.Perspective;
-import net.minecraft.entity.Entity;
-import net.minecraft.entity.LivingEntity;
-import net.minecraft.entity.player.PlayerEntity;
-import net.minecraft.item.ShieldItem;
-import net.minecraft.network.packet.c2s.play.PlayerMoveC2SPacket;
-import net.minecraft.network.packet.c2s.play.PlayerActionC2SPacket;
-import net.minecraft.util.Hand;
-import net.minecraft.util.hit.BlockHitResult;
-import net.minecraft.util.hit.HitResult;
-import net.minecraft.util.math.BlockPos;
-import net.minecraft.util.math.Box;
-import net.minecraft.util.math.Direction;
-import net.minecraft.util.math.Vec3d;
-import net.minecraft.world.RaycastContext;
+import net.minecraft.network.packet.c2s.play.ClientCommandC2SPacket;
 import org.lwjgl.glfw.GLFW;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-
-import java.util.List;
-import java.util.Random;
 
 public class SpeedMod implements ModInitializer {
     public static final Logger LOGGER = LoggerFactory.getLogger("speedmod");
@@ -30,26 +13,19 @@ public class SpeedMod implements ModInitializer {
 
     private static boolean enabled = false;
     private static boolean lastRState = false;
-    private static LivingEntity target = null;
-    private static long lastAttackTime = 0;
     private static int ticks = 0;
-    private static final Random random = new Random();
+    private static int groundTicks = 0;
 
-    // Параметры
-    private static float distance = 3.0f;
-    private static float snapTicks = 1.0f;
-    private static boolean wallsBypass = true;
-    private static boolean onlyCrits = true;
-    private static boolean shieldBreaker = true;
-    private static boolean unpressShield = true;
-
-    // Ротация (локальные углы для третьего лица)
-    private static Vector2f selfRotation = new Vector2f(0, 0);
-    private static Vector2f targetRotation = new Vector2f(0, 0);
+    // Настройки (можно менять)
+    private static final float TIMER_FAST = 1.7f;
+    private static final float TIMER_SLOW = 0.3f;
+    private static final float VERTICAL_BOOST = 0.03f;
+    private static final float GROUND_BOOST = 0.085f;
+    private static final float AIR_BOOST = 0.03f;
 
     @Override
     public void onInitialize() {
-        LOGGER.info("[ReallyWorld Aura] First-person: silent aim, Third-person: visible aim. Press R.");
+        LOGGER.info("[Speed] Full bypass module loaded. Press R to toggle.");
         Thread tickThread = new Thread(() -> {
             while (true) {
                 try {
@@ -60,13 +36,21 @@ public class SpeedMod implements ModInitializer {
                     boolean currentR = GLFW.glfwGetKey(window, GLFW.GLFW_KEY_R) == GLFW.GLFW_PRESS;
                     if (currentR && !lastRState) {
                         enabled = !enabled;
-                        LOGGER.info(enabled ? "Aura ON" : "Aura OFF");
-                        if (!enabled) target = null;
+                        LOGGER.info(enabled ? "Speed ON (Timer+Jump+Vel)" : "Speed OFF");
+                        if (!enabled) {
+                            mc.player.tickTimer = 1.0f;
+                            ticks = 0;
+                            groundTicks = 0;
+                        }
                         Thread.sleep(150);
                     }
                     lastRState = currentR;
 
-                    if (enabled) tick();
+                    if (enabled) {
+                        tick();
+                    } else {
+                        mc.player.tickTimer = 1.0f;
+                    }
                 } catch (InterruptedException e) {
                     break;
                 }
@@ -77,152 +61,55 @@ public class SpeedMod implements ModInitializer {
     }
 
     private static void tick() {
-        updateTarget();
-        if (target == null) {
-            selfRotation = new Vector2f(mc.player.getYaw(), mc.player.getPitch());
-            return;
+        // 1. Timer bypass (ускорение)
+        mc.player.tickTimer = TIMER_FAST;
+
+        // 2. Вертикальный и горизонтальный буст (каждые 2 тика)
+        if (ticks > 3) {
+            double bst = AIR_BOOST;
+            if (ticks % 2 == 0) {
+                mc.player.addVelocity(0, VERTICAL_BOOST, 0);
+                bst = mc.player.isOnGround() ? GROUND_BOOST : AIR_BOOST;
+            }
+            double yaw = Math.toRadians(getDirection());
+            double xt = -Math.sin(yaw);
+            double zt = Math.cos(yaw);
+            if (getDirection() == -1.0f) {
+                xt = 0.0;
+                zt = 0.0;
+            }
+            mc.player.addVelocity(xt * bst, 0, zt * bst);
         }
 
-        // Вычисляем целевые углы
-        targetRotation = rotationAngles(target);
+        ticks++;
 
-        // Логика ReallyWorld (блоки, тики)
-        boolean hasBlock = isBlockBetween(mc.player.getEyePos(), target.getBoundingBox().getCenter(), distance);
-        boolean isGliding = mc.player.isGliding();
-        boolean shouldRotate = true; // по умолчанию поворачиваем
-
-        if (hasBlock && !isGliding && !wallsBypass) {
-            if (ticks > 0) {
-                ticks--;
-            } else {
-                shouldRotate = false; // не поворачиваем, если блок есть и тики кончились
-            }
+        // 3. Jump on ground (обход антиспам прыжков)
+        if (mc.player.isOnGround() && !mc.player.isGliding()) {
+            groundTicks++;
         } else {
-            // нет блока или обход стен включён – можно поворачивать
-            if (hasBlock && wallsBypass) {
-                ticks = (int) snapTicks; // устанавливаем тики
-            }
+            groundTicks = 0;
+        }
+        if (groundTicks >= 1) {
+            mc.player.jump();
         }
 
-        // Определяем перспективу: первое или третье лицо
-        boolean isFirstPerson = mc.options.getPerspective() == Perspective.FIRST_PERSON;
-
-        if (shouldRotate) {
-            if (isFirstPerson) {
-                // Silent aim: отправляем пакет поворота, но не меняем локальную камеру
-                sendSilentLook(targetRotation.x, targetRotation.y);
-            } else {
-                // Третье лицо: поворачиваем камеру (видим наведение)
-                applyLocalRotation(targetRotation);
+        // 4. Elytra desync + timer slow (каждые 2 тика)
+        if (ticks % 2 == 0) {
+            mc.player.tickTimer = TIMER_SLOW;
+            if (mc.getNetworkHandler() != null) {
+                mc.getNetworkHandler().sendPacket(new ClientCommandC2SPacket(mc.player, ClientCommandC2SPacket.Mode.START_FALL_FLYING));
             }
-        } else {
-            // Не поворачиваем – отправляем текущие углы (можно ничего не делать)
-            if (isFirstPerson) {
-                // Чтобы не спамить, можно отправить текущие углы, но не обязательно
-            } else {
-                applyLocalRotation(new Vector2f(mc.player.getYaw(), mc.player.getPitch()));
-            }
-        }
-
-        // Атака (не зависит от перспективы)
-        attackTarget();
-    }
-
-    private static void sendSilentLook(float yaw, float pitch) {
-        if (mc.getNetworkHandler() == null) return;
-        PlayerMoveC2SPacket.LookAndOnGround packet = new PlayerMoveC2SPacket.LookAndOnGround(yaw, pitch, mc.player.isOnGround(), false);
-        mc.getNetworkHandler().sendPacket(packet);
-    }
-
-    private static void applyLocalRotation(Vector2f angles) {
-        mc.player.setYaw(angles.x);
-        mc.player.setPitch(angles.y);
-        mc.player.headYaw = angles.x;
-        mc.player.bodyYaw = angles.x;
-    }
-
-    private static void updateTarget() {
-        if (target != null && target.isAlive() && mc.player.squaredDistanceTo(target) <= distance * distance) {
-            return;
-        }
-        double closest = distance * distance;
-        LivingEntity best = null;
-        Box box = mc.player.getBoundingBox().expand(distance);
-        List<Entity> entities = mc.world.getOtherEntities(mc.player, box,
-                e -> e instanceof LivingEntity && e != mc.player && ((LivingEntity) e).isAlive());
-        for (Entity e : entities) {
-            if (e instanceof PlayerEntity && mc.player.isTeammate((PlayerEntity) e)) continue;
-            double distSq = mc.player.squaredDistanceTo(e);
-            if (distSq < closest && mc.player.canSee(e)) {
-                closest = distSq;
-                best = (LivingEntity) e;
-            }
-        }
-        target = best;
-    }
-
-    private static Vector2f rotationAngles(Entity target) {
-        Vec3d eyePos = mc.player.getEyePos();
-        Vec3d targetVec = target.getBoundingBox().getCenter().subtract(eyePos);
-        double hyp = Math.hypot(targetVec.x, targetVec.z);
-        float yaw = (float) (Math.toDegrees(Math.atan2(targetVec.z, targetVec.x)) - 90);
-        float pitch = (float) -Math.toDegrees(Math.atan2(targetVec.y, hyp));
-        return new Vector2f(wrapDegrees(yaw), clamp(pitch, -89, 89));
-    }
-
-    private static void attackTarget() {
-        if (mc.player.getAttackCooldownProgress(0.5f) < 1.0f) return;
-        if (target == null) return;
-        if (mc.player.squaredDistanceTo(target) > distance * distance) return;
-
-        if (onlyCrits && mc.player.isOnGround()) return;
-
-        long now = System.currentTimeMillis();
-        if (now - lastAttackTime >= 460L) {
-            // Обновляем ticks для wallsBypass (уже сделано в tick, но можно ещё раз)
-            boolean hasBlock = isBlockBetween(mc.player.getEyePos(), target.getBoundingBox().getCenter(), distance);
-            if (wallsBypass && hasBlock) {
-                ticks = (int) snapTicks;
-            }
-
-            if (unpressShield && mc.player.getOffHandStack().getItem() instanceof ShieldItem) {
-                mc.getNetworkHandler().sendPacket(new PlayerActionC2SPacket(PlayerActionC2SPacket.Action.RELEASE_USE_ITEM, BlockPos.ORIGIN, Direction.DOWN));
-            }
-
-            mc.interactionManager.attackEntity(mc.player, target);
-            mc.player.swingHand(Hand.MAIN_HAND);
-
-            // Shield Breaker (упрощённо)
-            if (shieldBreaker && target instanceof PlayerEntity && ((PlayerEntity) target).isBlocking()) {
-                // можно добавить дополнительную атаку
-            }
-
-            lastAttackTime = now;
         }
     }
 
-    private static boolean isBlockBetween(Vec3d from, Vec3d to, double range) {
-        Vec3d direction = to.subtract(from).normalize();
-        Vec3d end = from.add(direction.multiply(range));
-        BlockHitResult hit = mc.world.raycast(new RaycastContext(from, end, RaycastContext.ShapeType.OUTLINE, RaycastContext.FluidHandling.NONE, mc.player));
-        return hit.getType() == HitResult.Type.BLOCK;
-    }
-
-    private static float wrapDegrees(float value) {
-        value %= 360.0f;
-        if (value >= 180.0f) value -= 360.0f;
-        if (value < -180.0f) value += 360.0f;
-        return value;
-    }
-
-    private static float clamp(float value, float min, float max) {
-        if (value < min) return min;
-        if (value > max) return max;
-        return value;
-    }
-
-    static class Vector2f {
-        float x, y;
-        Vector2f(float x, float y) { this.x = x; this.y = y; }
+    // Получаем направление движения (0..360) или -1 если не движется
+    private static float getDirection() {
+        float yaw = mc.player.getYaw();
+        float forward = mc.player.input.movementForward;
+        float strafe = mc.player.input.movementSideways;
+        if (forward == 0 && strafe == 0) return -1.0f;
+        float angle = yaw + (strafe > 0 ? -90 : 90) * (strafe != 0 ? 1 : 0);
+        if (forward < 0) angle += 180;
+        return angle;
     }
 }
