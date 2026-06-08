@@ -2,7 +2,10 @@ package com.example.speed;
 
 import net.fabricmc.api.ModInitializer;
 import net.minecraft.client.MinecraftClient;
+import net.minecraft.network.packet.c2s.play.ClientCommandC2SPacket;
+import net.minecraft.network.packet.c2s.play.PlayerMoveC2SPacket;
 import net.minecraft.text.Text;
+import net.minecraft.util.math.MathHelper;
 import org.lwjgl.glfw.GLFW;
 
 public class SpeedMod implements ModInitializer {
@@ -16,53 +19,62 @@ public class SpeedMod implements ModInitializer {
             while (true) {
                 try { Thread.sleep(50); } catch (InterruptedException e) { break; }
                 if (mc.player == null) continue;
-
                 long window = mc.getWindow().getHandle();
                 boolean currentR = GLFW.glfwGetKey(window, GLFW.GLFW_KEY_R) == GLFW.GLFW_PRESS;
                 if (currentR && !lastR) {
                     enabled = !enabled;
-                    mc.player.sendMessage(Text.literal(enabled ? "§aLegitSpeed ON" : "§cLegitSpeed OFF"), true);
+                    mc.player.sendMessage(Text.literal(enabled ? "§aGrimSpeed ON" : "§cGrimSpeed OFF"), true);
                     try { Thread.sleep(200); } catch (InterruptedException ignored) {}
                 }
                 lastR = currentR;
-
-                if (enabled) {
-                    tick();
-                }
+                if (enabled) tick();
             }
         }).start();
     }
 
     private void tick() {
-        if (mc.player == null) return;
+        if (mc.player == null || mc.getNetworkHandler() == null) return;
 
-        // 1. Автоспринт (если зажат W)
-        if (mc.player.input.movementForward > 0) {
-            mc.player.setSprinting(true);
+        // 1. Принудительный прыжок (как в onInput)
+        // В оригинале e.setJumping(true) – мы не можем перехватить InputEvent, 
+        // но можем напрямую вызывать jump().
+        // Для имитации зажатого прыжка просто вызываем jump() каждый тик.
+        if (enabled) {
+            mc.player.jump();
         }
 
-        // 2. No Sprint Reset (сохраняем спринт после атаки)
-        // Просто каждый тик форсируем спринт, если нужно
-        if (mc.player.input.movementForward > 0 && mc.player.isSprinting()) {
-            // ничего не делаем, спринт уже включён
+        // 2. Отправка пакета статуса (StatusOnly) каждые 2 тика (onPreMotion)
+        if (mc.player.age % 2 == 0) {
+            mc.getNetworkHandler().sendPacket(new PlayerMoveC2SPacket.StatusOnly(mc.player.isOnGround()));
+            // Отправляем пакет начала полёта на элитре
+            mc.getNetworkHandler().sendPacket(new ClientCommandC2SPacket(mc.player, ClientCommandC2SPacket.Mode.START_FALL_FLYING));
         }
 
-        // 3. Лёгкий Strafe (улучшение поворотов) – очень мягко
-        if (mc.player.isSprinting() && mc.player.isOnGround()) {
-            float yaw = mc.player.getYaw();
-            float forward = mc.player.input.movementForward;
-            float strafe = mc.player.input.movementSideways;
-            if (forward > 0 && strafe == 0) {
-                // Идеальный поворот: если игрок поворачивает, не замедляться
-                // В ваниле при повороте скорость снижается, мы это компенсируем
-                double currentSpeed = Math.hypot(mc.player.getVelocity().x, mc.player.getVelocity().z);
-                double idealSpeed = 0.32; // ванильный спринт
-                if (currentSpeed < idealSpeed - 0.02) {
-                    // Добавляем микро-импульс только если скорость упала ниже нормы
-                    double rad = Math.toRadians(yaw);
-                    mc.player.addVelocity(-Math.sin(rad) * 0.005, 0, Math.cos(rad) * 0.005);
-                }
-            }
+        // 3. Изменение скорости (onTick)
+        float grim = 0.03f;
+        grim *= mc.player.isOnGround() ? 2.8500699f : 1.0200699f;
+
+        float dir = getDirection();
+        if (dir != -1.0f) {
+            double yaw = Math.toRadians(dir + 90f);
+            double mx = grim * Math.cos(yaw);
+            double mz = grim * Math.sin(yaw);
+            mc.player.addVelocity(mx, 0.0, mz);
         }
+
+        // Коррекция в воздухе (лёгкое замедление)
+        if (!mc.player.isOnGround()) {
+            mc.player.addVelocity(0.0, -0.050699, 0.0);
+        }
+    }
+
+    private float getDirection() {
+        float yaw = mc.player.getYaw();
+        float forward = mc.player.input.movementForward;
+        float strafe = mc.player.input.movementSideways;
+        if (forward == 0 && strafe == 0) return -1.0f;
+        float angle = yaw + (strafe > 0 ? -90 : 90) * (strafe != 0 ? 1 : 0);
+        if (forward < 0) angle += 180;
+        return angle;
     }
 }
