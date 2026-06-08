@@ -24,7 +24,7 @@ public class SpeedMod implements ModInitializer {
     private static boolean lastRShift = false;
     private static final Path MODULE_CONFIG = Paths.get("config/linxes_modules.json");
 
-    // ========== 45 модулей ==========
+    // ========== Модули (45 штук) ==========
     public enum ModuleCategory { COMBAT, MOVEMENT, VISUALS, PLAYER, MISC }
     public static class Module {
         public String name;
@@ -91,7 +91,7 @@ public class SpeedMod implements ModInitializer {
         modules.add(new Module("DiscordRPC", "Дискорд присутствие", ModuleCategory.MISC, GLFW.GLFW_KEY_UNKNOWN));
     }
 
-    // ========== Сохранение / загрузка ==========
+    // Конфиг
     private static class ModuleConfig { @Expose Map<String, Boolean> enabled = new HashMap<>(); @Expose Map<String, Integer> keyBind = new HashMap<>(); }
     private static final Gson GSON = new GsonBuilder().excludeFieldsWithoutExposeAnnotation().setPrettyPrinting().create();
     private static void saveModules() {
@@ -126,7 +126,7 @@ public class SpeedMod implements ModInitializer {
                 }
             }
         }).start();
-        // Обработка биндов (включение/выключение по клавишам)
+        // Обработка биндов
         new Thread(() -> {
             while (true) {
                 try { Thread.sleep(50); } catch (InterruptedException e) { break; }
@@ -142,17 +142,19 @@ public class SpeedMod implements ModInitializer {
         }).start();
     }
 
-    // ========== ТЁМНОЕ КЛИК-МЕНЮ ==========
+    // ========== ClickGUI (тёмное, с левыми категориями) ==========
     public static class ClickGUI extends Screen {
         private int selectedCategory = 0;
         private int scrollOffset = 0;
-        private static final int WIN_W = 400;
+        private static final int WIN_W = 520;
         private static final int WIN_H = 360;
         private int winX, winY;
         private Module selectedModule = null;
         private boolean binding = false;
+
         private static final List<ModuleCategory> categories = Arrays.asList(ModuleCategory.COMBAT, ModuleCategory.MOVEMENT, ModuleCategory.VISUALS, ModuleCategory.PLAYER, ModuleCategory.MISC);
         private final Map<ModuleCategory, List<Module>> modulesByCategory = new HashMap<>();
+
         private Font titleFont, catFont, modFont, descFont;
 
         public ClickGUI() {
@@ -176,80 +178,78 @@ public class SpeedMod implements ModInitializer {
 
         @Override
         public void render(DrawContext ctx, int mouseX, int mouseY, float delta) {
-            // Тёмный фон окна
-            drawRoundedRect(ctx, winX, winY, WIN_W, WIN_H, 12, 0xDD222222);
+            // Полупрозрачное окно (альфа 0xDD)
+            drawRoundedRect(ctx, winX, winY, WIN_W, WIN_H, 10, 0xDD1A1A1A);
             Graphics2D g = getGraphics2D(ctx);
             if (g == null) return;
             g.setRenderingHint(RenderingHints.KEY_TEXT_ANTIALIASING, RenderingHints.VALUE_TEXT_ANTIALIAS_ON);
-            // Заголовок (белый)
+            // Заголовок
             g.setFont(titleFont);
             g.setColor(Color.WHITE);
             drawCenteredString(g, "Lunxes DLC", winX + WIN_W/2, winY + 28);
-            // Категории (тёмные кнопки, текст белый)
-            int catStartX = winX + 20;
-            int catW = 68;
-            int spacing = (WIN_W - 40 - categories.size() * catW) / (categories.size() - 1);
-            if (spacing < 8) spacing = 8;
-            int catY = winY + 48;
+            // Левая панель категорий
+            int leftX = winX + 15;
+            int leftW = 100;
+            int startY = winY + 55;
+            int itemH = 32;
             g.setFont(catFont);
             for (int i = 0; i < categories.size(); i++) {
-                int x = catStartX + i * (catW + spacing);
-                boolean hover = mouseX >= x && mouseX <= x + catW && mouseY >= catY && mouseY <= catY + 24;
+                int y = startY + i * itemH;
+                boolean hover = mouseX >= leftX && mouseX <= leftX + leftW && mouseY >= y && mouseY <= y + itemH;
                 Color bgColor;
                 if (selectedCategory == i) bgColor = new Color(0x3A6EA5);
                 else if (hover) bgColor = new Color(0x444444);
-                else bgColor = new Color(0x333333);
+                else bgColor = new Color(0x2A2A2A);
                 g.setColor(bgColor);
-                g.fillRoundRect(x, catY, catW, 24, 6, 6);
+                g.fillRoundRect(leftX, y, leftW, itemH, 6, 6);
                 g.setColor(Color.WHITE);
-                drawCenteredString(g, categories.get(i).name(), x + catW/2, catY + 7);
+                g.drawString(categories.get(i).name(), leftX + 12, y + (itemH - 8) / 2 + 4);
             }
-            // Список модулей
-            int listX = winX + 15;
-            int listY = winY + 90;
-            int listW = WIN_W - 30;
-            int listH = WIN_H - 115;
-            g.setClip(listX, listY, listW, listH);
+            // Правая панель модулей
+            int rightX = leftX + leftW + 15;
+            int rightW = WIN_W - (rightX - winX) - 15;
+            int listY = winY + 55;
+            int listH = WIN_H - 70;
+            g.setClip(rightX, listY, rightW, listH);
             List<Module> mods = modulesByCategory.get(categories.get(selectedCategory));
             if (mods != null) {
-                int itemH = 38;
-                int visible = listH / itemH;
+                int moduleH = 42;
+                int visible = listH / moduleH;
                 int maxScroll = Math.max(0, mods.size() - visible);
                 scrollOffset = Math.max(0, Math.min(scrollOffset, maxScroll));
                 for (int i = 0; i < visible && scrollOffset + i < mods.size(); i++) {
                     Module m = mods.get(scrollOffset + i);
-                    int y = listY + i * itemH;
-                    boolean hover = mouseX >= listX && mouseX <= listX + listW && mouseY >= y && mouseY <= y + itemH;
+                    int y = listY + i * moduleH;
+                    boolean hover = mouseX >= rightX && mouseX <= rightX + rightW && mouseY >= y && mouseY <= y + moduleH;
                     if (hover) {
-                        g.setColor(new Color(0x44AAAAAA, true));
-                        g.fillRect(listX, y, listW, itemH);
+                        g.setColor(new Color(0x33FFFFFF, true));
+                        g.fillRect(rightX, y, rightW, moduleH);
                     }
-                    // Название модуля (белое)
                     g.setFont(modFont);
                     g.setColor(Color.WHITE);
-                    g.drawString(m.name, listX + 8, y + 13);
-                    // Описание (светло-серое)
+                    g.drawString(m.name, rightX + 8, y + 14);
                     g.setFont(descFont);
-                    g.setColor(new Color(0xCCCCCC));
-                    String desc = m.description.length() > 48 ? m.description.substring(0, 48) + "..." : m.description;
-                    g.drawString(desc, listX + 8, y + 28);
-                    // ON/OFF (зелёный/красный)
+                    g.setColor(new Color(0xBBBBBB));
+                    String desc = m.description.length() > 45 ? m.description.substring(0, 45) + "..." : m.description;
+                    g.drawString(desc, rightX + 8, y + 30);
+                    // ON/OFF
                     String toggle = m.enabled ? "ON" : "OFF";
-                    int toggleX = listX + listW - 40;
+                    int toggleX = rightX + rightW - 45;
                     g.setFont(modFont);
                     g.setColor(m.enabled ? new Color(0x55FF55) : new Color(0xFF5555));
-                    g.drawString(toggle, toggleX, y + 17);
-                    // Бинд (синий)
+                    g.drawString(toggle, toggleX, y + 18);
+                    // Bind
                     String bind = getKeyName(m.keyCode);
                     int bindX = toggleX - 55;
                     g.setColor(new Color(0x69B4FF));
-                    g.drawString("[" + bind + "]", bindX, y + 17);
+                    g.drawString("[" + bind + "]", bindX, y + 18);
                 }
             }
             g.setClip(null);
+            // Сообщение о привязке клавиши
             if (binding && selectedModule != null) {
                 g.setFont(catFont);
-                g.setColor(new Color(0xFFAA55));
+                g.setColor(new Color(0xFFDD88));
                 drawCenteredString(g, "Press any key for " + selectedModule.name + "...", winX + WIN_W/2, winY + WIN_H - 18);
             }
         }
@@ -263,31 +263,32 @@ public class SpeedMod implements ModInitializer {
         @Override
         public boolean mouseClicked(double mx, double my, int button) {
             if (button == 0) {
-                int catStartX = winX + 20;
-                int catW = 68;
-                int spacing = (WIN_W - 40 - categories.size() * catW) / (categories.size() - 1);
-                if (spacing < 8) spacing = 8;
-                int catY = winY + 48;
+                // Категории слева
+                int leftX = winX + 15;
+                int leftW = 100;
+                int startY = winY + 55;
+                int itemH = 32;
                 for (int i = 0; i < categories.size(); i++) {
-                    int x = catStartX + i * (catW + spacing);
-                    if (mx >= x && mx <= x + catW && my >= catY && my <= catY + 24) {
+                    int y = startY + i * itemH;
+                    if (mx >= leftX && mx <= leftX + leftW && my >= y && my <= y + itemH) {
                         selectedCategory = i;
                         scrollOffset = 0;
                         return true;
                     }
                 }
-                int listX = winX + 15;
-                int listY = winY + 90;
-                int listW = WIN_W - 30;
-                int itemH = 38;
+                // Модули справа
+                int rightX = leftX + leftW + 15;
+                int rightW = WIN_W - (rightX - winX) - 15;
+                int listY = winY + 55;
+                int moduleH = 42;
                 List<Module> mods = modulesByCategory.get(categories.get(selectedCategory));
                 if (mods != null) {
                     for (int i = 0; i < mods.size(); i++) {
-                        int y = listY + i * itemH;
-                        if (mx >= listX && mx <= listX + listW && my >= y && my <= y + itemH) {
+                        int y = listY + i * moduleH;
+                        if (mx >= rightX && mx <= rightX + rightW && my >= y && my <= y + moduleH) {
                             Module m = mods.get(i);
-                            int toggleX = listX + listW - 40;
-                            if (mx >= toggleX && mx <= toggleX + 30) {
+                            int toggleX = rightX + rightW - 45;
+                            if (mx >= toggleX && mx <= toggleX + 35) {
                                 m.enabled = !m.enabled;
                                 saveModules();
                                 return true;
@@ -334,6 +335,7 @@ public class SpeedMod implements ModInitializer {
             for (int i = -r; i <= r; i++) for (int j = -r; j <= r; j++) if (i*i + j*j <= r*r) ctx.fill(x + r + i, y + h - r + j, x + r + i + 1, y + h - r + j + 1, color);
             for (int i = -r; i <= r; i++) for (int j = -r; j <= r; j++) if (i*i + j*j <= r*r) ctx.fill(x + w - r + i, y + h - r + j, x + w - r + i + 1, y + h - r + j + 1, color);
         }
+
         private Graphics2D getGraphics2D(DrawContext ctx) {
             try { Field f = DrawContext.class.getDeclaredField("graphics"); f.setAccessible(true); Object obj = f.get(ctx); return (Graphics2D) obj; } catch (Exception e) { return null; }
         }
