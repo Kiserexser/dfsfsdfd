@@ -24,7 +24,7 @@ public class SpeedMod implements ModInitializer {
                     long window = mc.getWindow().getHandle();
                     boolean rShift = GLFW.glfwGetKey(window, GLFW.GLFW_KEY_RIGHT_SHIFT) == GLFW.GLFW_PRESS;
                     if (rShift && !lastRShift) {
-                        mc.execute(() -> mc.setScreen(new NeokeepGUI()));
+                        mc.execute(() -> mc.setScreen(new LinxesGUI()));
                         try { Thread.sleep(200); } catch (InterruptedException ignored) {}
                     }
                     lastRShift = rShift;
@@ -33,7 +33,7 @@ public class SpeedMod implements ModInitializer {
         }).start();
     }
 
-    static class NeokeepGUI extends Screen {
+    static class LinxesGUI extends Screen {
         private int selectedCategory = 0;
         private int scrollOffset = 0;
         private TextFieldWidget searchBox;
@@ -45,17 +45,27 @@ public class SpeedMod implements ModInitializer {
         private final List<String> categories = Arrays.asList("Combat", "Movement", "Visuals", "Player", "Misc");
         private final Map<String, List<ModuleEntry>> modules = new LinkedHashMap<>();
 
-        protected NeokeepGUI() {
-            super(Text.literal("Neokeep"));
+        protected LinxesGUI() {
+            super(Text.literal("Linxes"));
             initModules();
         }
 
         private void initModules() {
-            modules.put("Combat", Arrays.asList(new ModuleEntry("MiddleClickFriend", "Добавляет игрока в френд лист при нажатии на кнопку мыши")));
-            modules.put("Movement", Arrays.asList(new ModuleEntry("NameProtect", "Позволяет скрывать информацию о себе и других игроках")));
-            modules.put("Visuals", Arrays.asList(new ModuleEntry("ChatHistory", "Не удаляет историю чата при перезаходе на сервер")));
-            modules.put("Player", Arrays.asList(new ModuleEntry("KitMessage", "Пишет \"Мне\" если кто-то написал \"Кому жить\"")));
-            modules.put("Misc", Arrays.asList(new ModuleEntry("FakePlayer", "Не удаляет историю чата при перезаходе на сервер")));
+            modules.put("Combat", Arrays.asList(
+                new ModuleEntry("MiddleClickFriend", "Добавляет игрока в френд лист при нажатии на кнопку мыши")
+            ));
+            modules.put("Movement", Arrays.asList(
+                new ModuleEntry("NameProtect", "Позволяет скрывать информацию о себе и других игроках")
+            ));
+            modules.put("Visuals", Arrays.asList(
+                new ModuleEntry("ChatHistory", "Не удаляет историю чата при перезаходе на сервер")
+            ));
+            modules.put("Player", Arrays.asList(
+                new ModuleEntry("KitMessage", "Пишет \"Мне\" если кто-то написал \"Кому жить\"")
+            ));
+            modules.put("Misc", Arrays.asList(
+                new ModuleEntry("FakePlayer", "Не удаляет историю чата при перезаходе на сервер")
+            ));
         }
 
         @Override
@@ -72,16 +82,15 @@ public class SpeedMod implements ModInitializer {
 
         @Override
         public void render(DrawContext ctx, int mouseX, int mouseY, float delta) {
-            // Размытый фон (тёмное полупрозрачное наложение)
-            ctx.fill(0, 0, width, height, 0xCC000000);
+            // Блюр убран – фон не затемняется, окно рисуется прямо на игровом экране
 
-            // Окно с закруглениями
+            // окно с закруглёнными углами
             fillRounded(ctx, winX, winY, WIN_W, WIN_H, 12, 0xEE1E1E1E);
 
-            // Заголовок "FunTime"
-            ctx.drawCenteredTextWithShadow(textRenderer, Text.literal("FunTime"), winX + WIN_W / 2, winY + 8, 0xFFFFFF);
+            // заголовок "Linxes"
+            ctx.drawCenteredTextWithShadow(textRenderer, Text.literal("Linxes"), winX + WIN_W / 2, winY + 8, 0xFFFFFF);
 
-            // Категории (горизонтальные)
+            // категории
             int catX = winX + 10;
             int catY = winY + 32;
             int catW = 56;
@@ -89,18 +98,18 @@ public class SpeedMod implements ModInitializer {
             for (int i = 0; i < categories.size(); i++) {
                 int x = catX + i * (catW + 4);
                 boolean hover = mouseX >= x && mouseX <= x + catW && mouseY >= catY && mouseY <= catY + catH;
-                int col = (selectedCategory == i) ? 0xFFFFFF : (hover ? 0xCCCCCC : 0x888888);
-                ctx.drawText(textRenderer, categories.get(i), x, catY, col, false);
+                int color = (selectedCategory == i) ? 0xFFFFFF : (hover ? 0xCCCCCC : 0x888888);
+                ctx.drawText(textRenderer, categories.get(i), x, catY, color, false);
                 if (selectedCategory == i) {
                     int w = textRenderer.getWidth(categories.get(i));
                     ctx.fill(x, catY + catH - 1, x + w, catY + catH, 0xFF69B4FF);
                 }
             }
 
-            // Поиск
+            // поиск
             searchBox.render(ctx, mouseX, mouseY, delta);
 
-            // Список модулей
+            // список модулей
             int listX = winX + 10;
             int listY = winY + 65;
             int listW = WIN_W - 20;
@@ -130,8 +139,8 @@ public class SpeedMod implements ModInitializer {
             }
             ctx.disableScissor();
 
-            // Нижний текст
-            ctx.drawCenteredTextWithShadow(textRenderer, Text.literal("Hau Tenerpam t.me/funtime"), winX + WIN_W / 2, winY + WIN_H - 12, 0xAAAAAA);
+            // нижняя строка (можно изменить на что-то своё или оставить)
+            ctx.drawCenteredTextWithShadow(textRenderer, Text.literal("Linxes Client"), winX + WIN_W / 2, winY + WIN_H - 12, 0xAAAAAA);
 
             super.render(ctx, mouseX, mouseY, delta);
         }
