@@ -16,16 +16,24 @@ public class SpeedMod implements ModInitializer {
     private static int ticks = 0;
     private static int groundTicks = 0;
 
-    // Настройки (можно менять)
     private static final float TIMER_FAST = 1.7f;
     private static final float TIMER_SLOW = 0.3f;
     private static final float VERTICAL_BOOST = 0.03f;
     private static final float GROUND_BOOST = 0.085f;
     private static final float AIR_BOOST = 0.03f;
 
+    // Храним оригинальную длину тика (50 мс)
+    private static long originalTickLength = 50L;
+
     @Override
     public void onInitialize() {
         LOGGER.info("[Speed] Full bypass module loaded. Press R to toggle.");
+
+        // Получаем оригинальную длину тика
+        if (mc.timer != null) {
+            originalTickLength = mc.timer.tickLength;
+        }
+
         Thread tickThread = new Thread(() -> {
             while (true) {
                 try {
@@ -38,7 +46,7 @@ public class SpeedMod implements ModInitializer {
                         enabled = !enabled;
                         LOGGER.info(enabled ? "Speed ON (Timer+Jump+Vel)" : "Speed OFF");
                         if (!enabled) {
-                            mc.player.tickTimer = 1.0f;
+                            resetTimer();
                             ticks = 0;
                             groundTicks = 0;
                         }
@@ -49,7 +57,7 @@ public class SpeedMod implements ModInitializer {
                     if (enabled) {
                         tick();
                     } else {
-                        mc.player.tickTimer = 1.0f;
+                        resetTimer();
                     }
                 } catch (InterruptedException e) {
                     break;
@@ -60,9 +68,22 @@ public class SpeedMod implements ModInitializer {
         tickThread.start();
     }
 
+    private static void setTimer(float factor) {
+        if (mc.timer != null) {
+            // factor > 1 ускоряет, < 1 замедляет
+            mc.timer.tickLength = (long) (originalTickLength / factor);
+        }
+    }
+
+    private static void resetTimer() {
+        if (mc.timer != null) {
+            mc.timer.tickLength = originalTickLength;
+        }
+    }
+
     private static void tick() {
         // 1. Timer bypass (ускорение)
-        mc.player.tickTimer = TIMER_FAST;
+        setTimer(TIMER_FAST);
 
         // 2. Вертикальный и горизонтальный буст (каждые 2 тика)
         if (ticks > 3) {
@@ -95,7 +116,7 @@ public class SpeedMod implements ModInitializer {
 
         // 4. Elytra desync + timer slow (каждые 2 тика)
         if (ticks % 2 == 0) {
-            mc.player.tickTimer = TIMER_SLOW;
+            setTimer(TIMER_SLOW);
             if (mc.getNetworkHandler() != null) {
                 mc.getNetworkHandler().sendPacket(new ClientCommandC2SPacket(mc.player, ClientCommandC2SPacket.Mode.START_FALL_FLYING));
             }
