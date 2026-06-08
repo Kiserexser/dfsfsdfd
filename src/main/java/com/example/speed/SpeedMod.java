@@ -29,7 +29,6 @@ public class SpeedMod implements ModInitializer {
     private static Vector2f rotateVector = new Vector2f(0, 0);
 
     private static final float RANGE = 4.2f;
-    // Новая задержка: от 820 до 930 миллисекунд
     private static final long MIN_DELAY_MS = 820;
     private static final long MAX_DELAY_MS = 930;
     private static final boolean CORRECTION_MOTION = true;
@@ -78,10 +77,7 @@ public class SpeedMod implements ModInitializer {
         if (target == null) return;
 
         long now = System.currentTimeMillis();
-        // Очищаем старые времена (не обязательно, но оставим)
         attackTimes.removeIf(t -> now - t > 2000);
-
-        // Выбираем случайную задержку от MIN_DELAY_MS до MAX_DELAY_MS
         long delay = MIN_DELAY_MS + (long)(random.nextDouble() * (MAX_DELAY_MS - MIN_DELAY_MS));
         if (now - lastAttackTime < delay) return;
 
@@ -116,7 +112,8 @@ public class SpeedMod implements ModInitializer {
         Vec3d targetVec = target.getBoundingBox().getCenter().subtract(eyePos);
         double hyp = Math.hypot(targetVec.x, targetVec.z);
 
-        float targetYaw = (float) MathHelper.wrapDegrees(Math.toDegrees(Math.atan2(targetVec.z, targetVec.x)) - 90);
+        // Исправлено: приведение к float перед вызовом wrapDegrees
+        float targetYaw = (float) MathHelper.wrapDegrees((float)(Math.toDegrees(Math.atan2(targetVec.z, targetVec.x)) - 90));
         float targetPitch = (float) (-Math.toDegrees(Math.atan2(targetVec.y, hyp)));
         targetPitch = MathHelper.clamp(targetPitch, -89.0F, 89.0F);
 
@@ -173,7 +170,7 @@ public class SpeedMod implements ModInitializer {
         if (CORRECTION_MOTION) {
             client.player.bodyYaw = newYaw;
             client.player.headYaw = newYaw;
-            client.player.renderYawOffset = newYaw;
+            // renderYawOffset отсутствует в ClientPlayerEntity в 1.21.4, используем bodyYaw
             if (age % 8 == 0) {
                 client.player.headYaw += (random.nextFloat() - 0.5f) * 0.6f;
             }
@@ -193,7 +190,6 @@ public class SpeedMod implements ModInitializer {
         client.player.setYaw(rotateVector.x);
         client.player.setPitch(rotateVector.y);
 
-        // No Sprint Reset
         boolean wasSprinting = client.player.isSprinting();
         client.interactionManager.attackEntity(client.player, target);
         if (wasSprinting) client.player.setSprinting(true);
