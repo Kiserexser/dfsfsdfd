@@ -5,8 +5,8 @@ import net.minecraft.client.MinecraftClient;
 import net.minecraft.entity.Entity;
 import net.minecraft.entity.LivingEntity;
 import net.minecraft.entity.player.PlayerEntity;
+import net.minecraft.network.packet.c2s.play.PlayerMoveC2SPacket;
 import net.minecraft.util.math.Box;
-import net.minecraft.util.math.MathHelper;
 import net.minecraft.util.math.Vec3d;
 import org.lwjgl.glfw.GLFW;
 import org.slf4j.Logger;
@@ -24,15 +24,13 @@ public class SpeedMod implements ModInitializer {
     private static long lastAttackTime = 0;
     private static final Random random = new Random();
 
-    // Настройки
     private static final float RANGE = 4.2f;
     private static final long MIN_DELAY_MS = 820;
     private static final long MAX_DELAY_MS = 930;
-    private static final float ROTATION_SPEED = 8.0f; // градусов в тик (плавно, но достаточно для попадания)
 
     @Override
     public void onInitialize() {
-        LOGGER.info("[SpeedMod] Auto-aim killaura, smooth rotation. Press R to toggle.");
+        LOGGER.info("[SpeedMod] Silent Aim Killaura (others see your aim, you don't). Press R to toggle.");
 
         Thread tickThread = new Thread(() -> {
             while (true) {
@@ -46,8 +44,8 @@ public class SpeedMod implements ModInitializer {
 
                     if (currentR && !lastRState) {
                         enabled = !enabled;
-                        LOGGER.info(enabled ? "[Killaura] ENABLED" : "[Killaura] DISABLED");
-                        if (!enabled) target = null;
+                        LOGGER.info(enabled ? "[Killaura] ENABLED (silent aim)" : "[Killaura] DISABLED");
+                        target = null;
                         Thread.sleep(150);
                     }
                     lastRState = currentR;
@@ -65,19 +63,18 @@ public class SpeedMod implements ModInitializer {
     }
 
     private static void tick(MinecraftClient client) {
-        // Выбор цели
         updateTarget(client);
         if (target == null) return;
 
-        // Плавный поворот к цели (без резких движений)
-        rotateToTarget(client);
+        // Отправляем серверу пакет поворота на цель (без изменения локальной камеры)
+        sendSilentLook(client);
 
-        // Атака с задержкой
+        // Задержка атаки
         long now = System.currentTimeMillis();
         long delay = MIN_DELAY_MS + (long)(random.nextDouble() * (MAX_DELAY_MS - MIN_DELAY_MS));
         if (now - lastAttackTime < delay) return;
 
-        // Удар (сохраняем спринт)
+        // Атака с сохранением спринта
         boolean wasSprinting = client.player.isSprinting();
         client.interactionManager.attackEntity(client.player, target);
         if (wasSprinting) client.player.setSprinting(true);
@@ -96,55 +93,43 @@ public class SpeedMod implements ModInitializer {
 
         for (Entity e : entities) {
             if (e instanceof PlayerEntity && client.player.isTeammate((PlayerEntity) e)) continue;
-            double dist = client.player.squaredDistanceTo(e);
-            if (dist < closest) {
-                closest = dist;
+            double distSq = client.player.squaredDistanceTo(e);
+            if (distSq < closest) {
+                closest = distSq;
                 best = e;
             }
         }
         target = best;
     }
 
-    private static void rotateToTarget(MinecraftClient client) {
+    private static void sendSilentLook(MinecraftClient client) {
         if (target == null) return;
+        if (client.getNetworkHandler() == null) return;
 
-        // Вычисляем требуемые углы для взгляда на центр хитбокса цели
         Vec3d eyePos = client.player.getEyePos();
-        Vec3d targetPos = target.getBoundingBox().getCenter();
-        Vec3d diff = targetPos.subtract(eyePos);
-        double distanceXZ = Math.hypot(diff.x, diff.z);
+        Vec3d targetVec = target.getBoundingBox().getCenter().subtract(eyePos);
+        double hyp = Math.hypot(targetVec.x, targetVec.z);
+        float yaw = (float) (Math.toDegrees(Math.atan2(targetVec.z, targetVec.x)) - 90);
+        float pitch = (float) -Math.toDegrees(Math.atan2(targetVec.y, hyp));
 
-        float targetYaw = (float) Math.toDegrees(Math.atan2(diff.z, diff.x)) - 90;
-        float targetPitch = (float) -Math.toDegrees(Math.atan2(diff.y, distanceXZ));
+        yaw = wrapDegrees(yaw);
+        pitch = clamp(pitch, -89.0F, 89.0F);
 
-        // Нормализуем углы
-        targetYaw = MathHelper.wrapDegrees(targetYaw);
-        targetPitch = MathHelper.clamp(targetPitch, -89, 89);
+        // Отправляем пакет поворота серверу (без изменения позиции)
+        PlayerMoveC2SPacket.LookAndOnGround packet = new PlayerMoveC2SPacket.LookAndOnGround(yaw, pitch, client.player.isOnGround());
+        client.getNetworkHandler().sendPacket(packet);
+    }
 
-        // Текущие углы игрока
-        float currentYaw = client.player.getYaw();
-        float currentPitch = client.player.getPitch();
+    private static float wrapDegrees(float value) {
+        value = value % 360.0F;
+        if (value >= 180.0F) value -= 360.0F;
+        if (value < -180.0F) value += 360.0F;
+        return value;
+    }
 
-        // Плавный поворот: ограничиваем изменение скорости вращения
-        float deltaYaw = MathHelper.wrapDegrees(targetYaw - currentYaw);
-        float deltaPitch = targetPitch - currentPitch;
-
-        float stepYaw = MathHelper.clamp(deltaYaw, -ROTATION_SPEED, ROTATION_SPEED);
-        float stepPitch = MathHelper.clamp(deltaPitch, -ROTATION_SPEED, ROTATION_SPEED);
-
-        float newYaw = currentYaw + stepYaw;
-        float newPitch = currentPitch + stepPitch;
-        newPitch = MathHelper.clamp(newPitch, -89, 89);
-
-        // Применяем поворот
-        client.player.setYaw(newYaw);
-        client.player.setPitch(newPitch);
-        // Для отображения другим игрокам синхронизируем углы тела и головы
-        client.player.bodyYaw = newYaw;
-        client.player.headYaw = newYaw;
-        // Небольшой случайный шум для натуральности (опционально)
-        if (client.player.age % 10 == 0) {
-            client.player.headYaw += (random.nextFloat() - 0.5f) * 0.5f;
-        }
+    private static float clamp(float value, float min, float max) {
+        if (value < min) return min;
+        if (value > max) return max;
+        return value;
     }
 }
