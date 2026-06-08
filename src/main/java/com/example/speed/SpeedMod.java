@@ -79,7 +79,11 @@ public class SpeedMod implements ModInitializer {
                 if (i == selectedCategory) {
                     context.fill(startX, y, startX + 4, y + catHeight, 0xFF69B4FF);
                 }
-                context.drawCenteredText(textRenderer, categories.get(i), startX + catWidth / 2, y + (catHeight - 8) / 2, 0xFFFFFF, false);
+                String catText = categories.get(i);
+                int textWidth = textRenderer.getWidth(catText);
+                int textX = startX + (catWidth - textWidth) / 2;
+                int textY = y + (catHeight - 8) / 2;
+                context.drawText(textRenderer, catText, textX, textY, 0xFFFFFF, false);
             }
 
             int rightX = startX + catWidth + 15;
@@ -106,10 +110,14 @@ public class SpeedMod implements ModInitializer {
                     context.drawText(textRenderer, modName, rightX + 8, y + (moduleHeight - 8) / 2, 0xE0E0E0, false);
                     String toggleText = state ? "ON" : "OFF";
                     int toggleColor = state ? 0xFF55FF55 : 0xFFFF5555;
-                    context.drawText(textRenderer, toggleText, rightX + rightWidth - 40, y + (moduleHeight - 8) / 2, toggleColor, false);
+                    int toggleX = rightX + rightWidth - textRenderer.getWidth(toggleText) - 8;
+                    context.drawText(textRenderer, toggleText, toggleX, y + (moduleHeight - 8) / 2, toggleColor, false);
                 }
             }
-            context.drawCenteredTextWithShadow(textRenderer, Text.literal("SpeedMod"), width / 2, 12, 0xFFFFFF);
+
+            String title = "SpeedMod";
+            int titleWidth = textRenderer.getWidth(title);
+            context.drawText(textRenderer, title, (width - titleWidth) / 2, 12, 0xFFFFFF, true);
             super.render(context, mouseX, mouseY, delta);
         }
 
