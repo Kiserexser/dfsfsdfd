@@ -8,7 +8,6 @@ import net.minecraft.text.Text;
 import org.lwjgl.glfw.GLFW;
 
 import java.util.*;
-import java.util.stream.Collectors;
 
 public class SpeedMod implements ModInitializer {
     private static final MinecraftClient mc = MinecraftClient.getInstance();
@@ -74,13 +73,14 @@ public class SpeedMod implements ModInitializer {
 
         @Override
         public void render(DrawContext ctx, int mouseX, int mouseY, float delta) {
-            // Окно с закруглёнными углами
+            // Не рисуем фон экрана – окно поверх игры без затемнения
+            // Рисуем только окно
             fillRounded(ctx, winX, winY, WIN_W, WIN_H, 12, 0xEE1E1E1E);
 
-            // Заголовок "Linxes"
+            // Заголовок
             ctx.drawCenteredTextWithShadow(textRenderer, Text.literal("Linxes"), winX + WIN_W / 2, winY + 8, 0xFFFFFF);
 
-            // Категории (горизонтальные)
+            // Категории
             int catX = winX + 10;
             int catY = winY + 32;
             int catW = 56;
@@ -126,6 +126,9 @@ public class SpeedMod implements ModInitializer {
             // Нижняя строка
             ctx.drawCenteredTextWithShadow(textRenderer, Text.literal("Linxes Client"), winX + WIN_W / 2, winY + WIN_H - 12, 0xAAAAAA);
 
+            // Не вызываем super.render, чтобы не было фона
+            // но можно вызвать, он всё равно не рисует фон, если нет renderBackground
+            // оставим для стандартной обработки детей (но у нас их нет)
             super.render(ctx, mouseX, mouseY, delta);
         }
 
