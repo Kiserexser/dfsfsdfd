@@ -6,6 +6,8 @@ import net.minecraft.entity.Entity;
 import net.minecraft.entity.LivingEntity;
 import net.minecraft.entity.player.PlayerEntity;
 import net.minecraft.network.packet.c2s.play.PlayerMoveC2SPacket;
+import net.minecraft.network.packet.c2s.play.HandSwingC2SPacket;
+import net.minecraft.util.Hand;
 import net.minecraft.util.math.Box;
 import net.minecraft.util.math.MathHelper;
 import net.minecraft.util.math.Vec3d;
@@ -23,26 +25,27 @@ public class SpeedMod implements ModInitializer {
     private static final SecureRandom RANDOM = new SecureRandom();
     private static final Random RAND = new Random();
 
+    // Настройки
     private static final float RANGE = 4.0f;
     private static final long BASE_DELAY_MS = 460L;
     private static final long DELAY_VARIATION_MS = 40L;
-    private static final float MAX_ANGLE_DELTA = 25.0f;   // увеличено для более быстрой атаки
+    private static final float MAX_ANGLE_DELTA = 20.0f;   // угол, при котором атакуем
+    private static final float ROTATION_SPEED = 0.9f;      // насколько быстро поворачиваем голову (0.8-1.0)
 
+    // Состояние
     private static boolean enabled = false;
     private static boolean lastR = false;
     private static Entity target = null;
     private static long lastAttackTime = 0;
     private static int hitCount = 0;
-    private static long attackTimerStart = 0;
-    private static int lastBoostHitCount = -1;
 
-    // для silent aim
-    private static float lastSentYaw = 0, lastSentPitch = 0;
+    // Silent aim углы (отправляемые серверу)
+    private static float sentYaw = 0, sentPitch = 0;
     private static boolean initSent = false;
 
     @Override
     public void onInitialize() {
-        LOGGER.info("[Fast Silent Killaura] Press R to toggle.");
+        LOGGER.info("[Visible Killaura] Others WILL see your hits. Press R.");
         new Thread(() -> {
             while (true) {
                 try { Thread.sleep(50); } catch (InterruptedException e) { break; }
@@ -51,7 +54,7 @@ public class SpeedMod implements ModInitializer {
                 boolean currR = GLFW.glfwGetKey(win, GLFW.GLFW_KEY_R) == GLFW.GLFW_PRESS;
                 if (currR && !lastR) {
                     enabled = !enabled;
-                    LOGGER.info(enabled ? "Killaura ON (silent, fast)" : "Killaura OFF");
+                    LOGGER.info(enabled ? "Killaura ON (others see)" : "Killaura OFF");
                     if (!enabled) target = null;
                     try { Thread.sleep(150); } catch (InterruptedException ignored) {}
                 }
@@ -75,52 +78,44 @@ public class SpeedMod implements ModInitializer {
         float idealYaw = wrap((float) (Math.toDegrees(Math.atan2(to.z, to.x)) - 90));
         float idealPitch = clamp((float) -Math.toDegrees(Math.atan2(to.y, hyp)), -89, 89);
 
-        // ---- Silent Aim: отправляем пакет поворота на сервер (другие видят) ----
+        // Инициализация отправляемых углов
         if (!initSent) {
-            lastSentYaw = mc.player.getYaw();
-            lastSentPitch = mc.player.getPitch();
+            sentYaw = mc.player.getYaw();
+            sentPitch = mc.player.getPitch();
             initSent = true;
         }
 
-        // Быстрая подстройка отправляемых углов к идеальным (почти мгновенно)
-        float deltaYaw = wrap(idealYaw - lastSentYaw);
-        float deltaPitch = idealPitch - lastSentPitch;
+        // Плавная подстройка отправляемых углов к идеальным (можно сделать резкой, увеличив ROTATION_SPEED)
+        float deltaYaw = wrap(idealYaw - sentYaw);
+        float deltaPitch = idealPitch - sentPitch;
         float totalDelta = (float) Math.hypot(Math.abs(deltaYaw), Math.abs(deltaPitch));
 
-        // Ускоренная наводка: если дельта больше 0.1, двигаем сразу на 80% разницы
-        float speed = 0.8f;
-        float newYaw = lastSentYaw + deltaYaw * speed;
-        float newPitch = lastSentPitch + deltaPitch * speed;
-        newYaw = wrap(newYaw);
-        newPitch = clamp(newPitch, -89, 89);
+        sentYaw += deltaYaw * ROTATION_SPEED;
+        sentPitch += deltaPitch * ROTATION_SPEED;
+        sentYaw = wrap(sentYaw);
+        sentPitch = clamp(sentPitch, -89, 89);
 
-        // Добавляем лёгкий шум (чтобы не палиться)
-        if (hitCount > 0) {
-            newYaw += (RANDOM.nextFloat() - 0.5f) * 0.5f;
-            newPitch += (RANDOM.nextFloat() - 0.5f) * 0.3f;
-        }
-
-        // Отправляем пакет поворота на сервер (без изменения локальной камеры)
+        // Отправляем пакет поворота на сервер (чтобы другие видели, куда ты смотришь)
         if (mc.getNetworkHandler() != null) {
-            PlayerMoveC2SPacket.LookAndOnGround packet = new PlayerMoveC2SPacket.LookAndOnGround(newYaw, newPitch, mc.player.isOnGround(), false);
-            mc.getNetworkHandler().sendPacket(packet);
+            PlayerMoveC2SPacket.LookAndOnGround lookPacket = new PlayerMoveC2SPacket.LookAndOnGround(sentYaw, sentPitch, mc.player.isOnGround(), false);
+            mc.getNetworkHandler().sendPacket(lookPacket);
         }
-        lastSentYaw = newYaw;
-        lastSentPitch = newPitch;
 
-        // ---- Атака (с задержкой и проверкой угла) ----
+        // Атака с задержкой и проверкой угла
         long now = System.currentTimeMillis();
         long delay = BASE_DELAY_MS + (long)(RAND.nextDouble() * DELAY_VARIATION_MS) - DELAY_VARIATION_MS/2;
         boolean canAttack = totalDelta < MAX_ANGLE_DELTA;
         if (now - lastAttackTime >= delay && canAttack) {
-            boolean wasSprint = mc.player.isSprinting();
+            // Отправляем атаку (сервер засчитывает урон, другие видят анимацию)
             mc.interactionManager.attackEntity(mc.player, target);
-            mc.player.swingHand(net.minecraft.util.Hand.MAIN_HAND);
-            if (wasSprint) mc.player.setSprinting(true);
+            // Отправляем взмах руки (чтобы другие видели замах)
+            mc.getNetworkHandler().sendPacket(new HandSwingC2SPacket(Hand.MAIN_HAND));
+            // Спринт сохраняем
+            boolean wasSprinting = mc.player.isSprinting();
+            if (wasSprinting) mc.player.setSprinting(true);
             mc.player.setSprinting(true);
             lastAttackTime = now;
             hitCount++;
-            attackTimerStart = now;
         }
     }
 
