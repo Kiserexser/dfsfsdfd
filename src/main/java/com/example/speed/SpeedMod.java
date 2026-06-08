@@ -22,15 +22,17 @@ public class SpeedMod implements ModInitializer {
     private static boolean lastRState = false;
     private static Entity target = null;
     private static long lastAttackTime = 0;
+    private static long lastLookPacketTime = 0;
     private static final Random random = new Random();
 
     private static final float RANGE = 4.0f;
-    private static final long MIN_DELAY_MS = 820;
-    private static final long MAX_DELAY_MS = 930;
+    private static final long MIN_ATTACK_DELAY = 820;
+    private static final long MAX_ATTACK_DELAY = 930;
+    private static final long LOOK_PACKET_INTERVAL = 150; // 150 мс – плавно для других, незаметно для античита
 
     @Override
     public void onInitialize() {
-        LOGGER.info("[RW] Silent Aim Killaura (others see aim, you don't). Press R.");
+        LOGGER.info("[RW] No camera jerk + others see aim. Press R.");
         Thread tickThread = new Thread(() -> {
             while (true) {
                 try {
@@ -41,7 +43,7 @@ public class SpeedMod implements ModInitializer {
                     boolean currentR = GLFW.glfwGetKey(window, GLFW.GLFW_KEY_R) == GLFW.GLFW_PRESS;
                     if (currentR && !lastRState) {
                         enabled = !enabled;
-                        LOGGER.info(enabled ? "Killaura ON" : "Killaura OFF");
+                        LOGGER.info(enabled ? "Killaura ON (no jerk)" : "Killaura OFF");
                         if (!enabled) target = null;
                         Thread.sleep(150);
                     }
@@ -59,19 +61,22 @@ public class SpeedMod implements ModInitializer {
         if (target == null) return;
 
         long now = System.currentTimeMillis();
-        long delay = MIN_DELAY_MS + (long)(random.nextDouble() * (MAX_DELAY_MS - MIN_DELAY_MS));
-        if (now - lastAttackTime < delay) return;
 
-        // Отправляем серверу пакет поворота на цель (другие увидят твою голову повёрнутой)
-        sendLookAtTarget(client, target);
+        // Отправляем пакеты поворота на сервер, чтобы другие видели наведение
+        if (now - lastLookPacketTime >= LOOK_PACKET_INTERVAL) {
+            sendLookAtTarget(client, target);
+            lastLookPacketTime = now;
+        }
 
-        // Атакуем, не меняя локальную камеру
-        boolean wasSprinting = client.player.isSprinting();
-        client.interactionManager.attackEntity(client.player, target);
-        if (wasSprinting) client.player.setSprinting(true);
-        client.player.setSprinting(true); // дополнительно форсируем спринт
-
-        lastAttackTime = now;
+        // Атака с задержкой
+        long attackDelay = MIN_ATTACK_DELAY + (long)(random.nextDouble() * (MAX_ATTACK_DELAY - MIN_ATTACK_DELAY));
+        if (now - lastAttackTime >= attackDelay) {
+            boolean wasSprinting = client.player.isSprinting();
+            client.interactionManager.attackEntity(client.player, target);
+            if (wasSprinting) client.player.setSprinting(true);
+            client.player.setSprinting(true);
+            lastAttackTime = now;
+        }
     }
 
     private static void updateTarget(MinecraftClient client) {
@@ -96,7 +101,6 @@ public class SpeedMod implements ModInitializer {
 
     private static void sendLookAtTarget(MinecraftClient client, Entity target) {
         if (client.getNetworkHandler() == null) return;
-        // Вычисляем углы на центр хитбокса цели
         Vec3d eyePos = client.player.getEyePos();
         Vec3d targetVec = target.getBoundingBox().getCenter().subtract(eyePos);
         double hyp = Math.hypot(targetVec.x, targetVec.z);
@@ -104,7 +108,6 @@ public class SpeedMod implements ModInitializer {
         float pitch = (float) -Math.toDegrees(Math.atan2(targetVec.y, hyp));
         yaw = wrapDegrees(yaw);
         pitch = clamp(pitch, -89, 89);
-        // Отправляем пакет поворота (без изменения позиции)
         PlayerMoveC2SPacket.LookAndOnGround packet = new PlayerMoveC2SPacket.LookAndOnGround(yaw, pitch, client.player.isOnGround(), false);
         client.getNetworkHandler().sendPacket(packet);
     }
