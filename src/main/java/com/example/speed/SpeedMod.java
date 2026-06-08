@@ -2,141 +2,265 @@ package com.example.speed;
 
 import net.fabricmc.api.ModInitializer;
 import net.minecraft.client.MinecraftClient;
+import net.minecraft.entity.Entity;
+import net.minecraft.entity.LivingEntity;
+import net.minecraft.entity.player.PlayerEntity;
+import net.minecraft.util.math.Box;
+import net.minecraft.util.math.MathHelper;
 import net.minecraft.util.math.Vec3d;
 import org.lwjgl.glfw.GLFW;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import java.security.SecureRandom;
+import java.util.List;
 import java.util.Random;
 
 public class SpeedMod implements ModInitializer {
-    public static final Logger LOGGER = LoggerFactory.getLogger("speedmod");
+    private static final Logger LOGGER = LoggerFactory.getLogger("speedmod");
     private static final MinecraftClient mc = MinecraftClient.getInstance();
-    private static final Random random = new Random();
+    private static final SecureRandom RANDOM = new SecureRandom();
+    private static final Random RAND = new Random();
 
+    // ========== НАСТРОЙКИ ==========
+    private static final float RANGE = 4.0f;
+    private static final long BASE_DELAY_MS = 460L;
+    private static final long DELAY_VARIATION_MS = 40L;   // разброс задержки
+    private static final float MAX_ANGLE_DELTA = 15.0f;   // для атаки
+
+    // ========== СОСТОЯНИЕ ==========
     private static boolean enabled = false;
-    private static boolean lastRState = false;
-    private static int jumpTicks = 0;
-    private static int glideTicks = 0;
-    private static double lastY = 0;
-    private static int lastResetTick = 0;
+    private static boolean lastR = false;
+    private static Entity target = null;
+    private static long lastAttackTime = 0;
+    private static int hitCount = 0;
+    private static long attackTimerStart = 0;
+    private static int lastBoostHitCount = -1;
 
-    // Параметры (настраиваемые)
-    private static final double JUMP_FORCE = 0.42;        // сила прыжка (ванильная ~0.42)
-    private static final double EXTRA_UP = 0.12;          // дополнительный вертикальный импульс при зажатии прыжка
-    private static final double GLIDE_SLOW = 0.04;        // замедление падения (положительное добавление к вертикальной скорости)
-    private static final int MIN_BOOST_INTERVAL = 2;      // минимальные тики между импульсами
-    private static final int MAX_BOOST_INTERVAL = 5;      // максимальные тики
-    private static final double HORIZONTAL_BOOST = 0.045;  // горизонтальное ускорение в воздухе
-    private static final double NOISE_RANGE = 0.008;       // случайный шум к скорости
+    // Данные для ротации (как в FTAngle)
+    private static float lastYaw = 0, lastPitch = 0;
+    private static boolean initAngles = false;
 
     @Override
     public void onInitialize() {
-        LOGGER.info("[Matrix/Grim Flight] Jump+Glide+Noise. No Elytra. Press R.");
-        Thread tickThread = new Thread(() -> {
+        LOGGER.info("[FTAngle Killaura] Press R to toggle.");
+        new Thread(() -> {
             while (true) {
-                try {
-                    Thread.sleep(50);
-                    if (mc.player == null || mc.world == null) continue;
-                    long window = mc.getWindow().getHandle();
-                    boolean currentR = GLFW.glfwGetKey(window, GLFW.GLFW_KEY_R) == GLFW.GLFW_PRESS;
-                    if (currentR && !lastRState) {
-                        enabled = !enabled;
-                        LOGGER.info(enabled ? "Flight ON (Safe mode)" : "Flight OFF");
-                        if (!enabled) {
-                            jumpTicks = 0;
-                            glideTicks = 0;
-                        }
-                        Thread.sleep(150);
-                    }
-                    lastRState = currentR;
-                    if (enabled) tick();
-                } catch (InterruptedException e) { break; }
+                try { Thread.sleep(50); } catch (InterruptedException e) { break; }
+                if (mc.player == null || mc.world == null) continue;
+                long win = mc.getWindow().getHandle();
+                boolean currR = GLFW.glfwGetKey(win, GLFW.GLFW_KEY_R) == GLFW.GLFW_PRESS;
+                if (currR && !lastR) {
+                    enabled = !enabled;
+                    LOGGER.info(enabled ? "Killaura ON" : "Killaura OFF");
+                    if (!enabled) target = null;
+                    Thread.sleep(150);
+                }
+                lastR = currR;
+                if (enabled) tick();
             }
-        });
-        tickThread.setDaemon(true);
-        tickThread.start();
+        }).start();
     }
 
     private static void tick() {
-        boolean jumpPressed = mc.options.jumpKey.isPressed();
-
-        // ---- Обход отката: если сервер скорректировал позицию вниз, сбрасываем импульсы ----
-        double currentY = mc.player.getY();
-        if (currentY < lastY - 0.5 && mc.player.age - lastResetTick > 10) {
-            // Произошёл откат (античит опустил игрока)
-            jumpTicks = MAX_BOOST_INTERVAL + 1; // временно блокируем импульсы
-            lastResetTick = mc.player.age;
-            LOGGER.debug("Anti-cheat rollback detected, pausing boosts");
+        updateTarget();
+        if (target == null) {
+            initAngles = false;
+            return;
         }
-        lastY = currentY;
 
-        // ---- Glide: замедление падения при зажатом прыжке в воздухе (без элитры) ----
-        if (jumpPressed && !mc.player.isOnGround()) {
-            if (mc.player.getVelocity().y < -0.05) {
-                // Добавляем небольшой положительный импульс, чтобы замедлить падение
-                if (glideTicks >= 1) {
-                    double glideBoost = GLIDE_SLOW + (random.nextDouble() * 0.02);
-                    mc.player.addVelocity(0, glideBoost, 0);
-                    glideTicks = 0;
-                } else {
-                    glideTicks++;
-                }
-            }
+        if (!initAngles) {
+            lastYaw = mc.player.getYaw();
+            lastPitch = mc.player.getPitch();
+            initAngles = true;
+        }
+
+        // Идеальные углы на цель
+        Vec3d eye = mc.player.getEyePos();
+        Vec3d to = target.getBoundingBox().getCenter().subtract(eye);
+        double hyp = Math.hypot(to.x, to.z);
+        float idealYaw = wrap((float) (Math.toDegrees(Math.atan2(to.z, to.x)) - 90));
+        float idealPitch = clamp((float) -Math.toDegrees(Math.atan2(to.y, hyp)), -89, 89);
+
+        // Текущие углы
+        float curYaw = lastYaw;
+        float curPitch = lastPitch;
+
+        float yawDelta = wrap(idealYaw - curYaw);
+        float pitchDelta = idealPitch - curPitch;
+        float totalDelta = (float) Math.hypot(Math.abs(yawDelta), Math.abs(pitchDelta));
+
+        // Атака с задержкой и проверкой угла
+        long now = System.currentTimeMillis();
+        long attackDelay = BASE_DELAY_MS + (long)(RAND.nextDouble() * DELAY_VARIATION_MS) - DELAY_VARIATION_MS/2;
+        boolean canAttack = totalDelta < MAX_ANGLE_DELTA;
+        if (now - lastAttackTime >= attackDelay && canAttack) {
+            boolean wasSprint = mc.player.isSprinting();
+            mc.interactionManager.attackEntity(mc.player, target);
+            mc.player.swingHand(net.minecraft.util.Hand.MAIN_HAND);
+            if (wasSprint) mc.player.setSprinting(true);
+            mc.player.setSprinting(true);
+            lastAttackTime = now;
+            hitCount++;
+            attackTimerStart = now;
+        }
+
+        // Вычисляем новые углы через логику FTAngle
+        Turns newTurns = limitAngleChange(curYaw, curPitch, idealYaw, idealPitch, yawDelta, pitchDelta, totalDelta);
+        lastYaw = newTurns.yaw;
+        lastPitch = newTurns.pitch;
+
+        // Применяем ротацию (видимую для всех)
+        mc.player.setYaw(lastYaw);
+        mc.player.setPitch(lastPitch);
+        mc.player.headYaw = lastYaw;
+        mc.player.bodyYaw = lastYaw;
+    }
+
+    // Полная логика FTAngle (земля/воздух, шумы, буст-джиттер)
+    private static Turns limitAngleChange(float curYaw, float curPitch, float targetYaw, float targetPitch,
+                                          float yawDelta, float pitchDelta, float totalDelta) {
+        boolean onGround = mc.player.isOnGround();
+        if (totalDelta < 1e-4f) {
+            return new Turns(targetYaw, targetPitch);
+        }
+        if (onGround) {
+            return buildGroundRotation(curYaw, curPitch, targetYaw, targetPitch,
+                    yawDelta, pitchDelta, totalDelta);
         } else {
-            glideTicks = 0;
-        }
-
-        // ---- Jump Flight: дополнительные импульсы вверх при зажатом прыжке в воздухе ----
-        if (jumpPressed && !mc.player.isOnGround()) {
-            // Рандомизированный интервал между импульсами (обход паттернов)
-            int interval = MIN_BOOST_INTERVAL + random.nextInt(MAX_BOOST_INTERVAL - MIN_BOOST_INTERVAL + 1);
-            if (jumpTicks >= interval) {
-                // Сила импульса с небольшим случайным разбросом
-                double up = EXTRA_UP + (random.nextDouble() * 0.06) - 0.03;
-                mc.player.addVelocity(0, up, 0);
-
-                // Горизонтальный буст, если игрок двигается
-                float forward = mc.player.input.movementForward;
-                float strafe = mc.player.input.movementSideways;
-                if (forward != 0 || strafe != 0) {
-                    float yaw = mc.player.getYaw();
-                    double rad = Math.toRadians(yaw);
-                    double horizontal = HORIZONTAL_BOOST + (random.nextDouble() * 0.02);
-                    double vx = -Math.sin(rad) * forward * horizontal;
-                    double vz = Math.cos(rad) * forward * horizontal;
-                    if (strafe != 0) {
-                        double strafeRad = Math.toRadians(yaw + (strafe > 0 ? -90 : 90));
-                        vx += -Math.sin(strafeRad) * strafe * horizontal;
-                        vz += Math.cos(strafeRad) * strafe * horizontal;
-                    }
-                    mc.player.addVelocity(vx, 0, vz);
-                }
-
-                // Добавляем микро-шум ко всем осям (обход идеальных скоростей)
-                double noiseX = (random.nextDouble() - 0.5) * NOISE_RANGE;
-                double noiseZ = (random.nextDouble() - 0.5) * NOISE_RANGE;
-                mc.player.addVelocity(noiseX, 0, noiseZ);
-
-                jumpTicks = 0;
-            } else {
-                jumpTicks++;
-            }
-        } else {
-            jumpTicks = 0;
-        }
-
-        // ---- Дополнительный обход: если игрок на земле и прыгает, даём небольшой бонус ----
-        if (jumpPressed && mc.player.isOnGround() && mc.player.age % 3 == 0) {
-            mc.player.jump();
-            // Увеличиваем силу прыжка незначительно
-            Vec3d vel = mc.player.getVelocity();
-            mc.player.setVelocity(vel.x, JUMP_FORCE + 0.02, vel.z);
-        }
-
-        // ---- Anti-Kick: если слишком долго в воздухе, сбрасываем импульсы на секунду ----
-        if (mc.player.age % 100 == 0 && !mc.player.isOnGround()) {
-            jumpTicks = MAX_BOOST_INTERVAL + 2;
+            return buildAirRotation(curYaw, curPitch, targetYaw, targetPitch,
+                    yawDelta, pitchDelta, totalDelta);
         }
     }
+
+    private static Turns buildGroundRotation(float curYaw, float curPitch, float targetYaw, float targetPitch,
+                                             float yawDelta, float pitchDelta, float totalDelta) {
+        // Параметры как в оригинальном FTAngle (без зависимостей от Aura)
+        boolean instantTrack = target != null && (System.currentTimeMillis() - lastAttackTime) < 500;
+        float followStrength = instantTrack ? 1.0f : (RANDOM.nextBoolean() ? 1.2f : 2.0f);
+        float yawLimit = Math.abs(yawDelta / totalDelta) * 180.0f;
+        float pitchLimit = Math.abs(pitchDelta / totalDelta) * 180.0f;
+        float clampedYaw = MathHelper.clamp(yawDelta, -yawLimit, yawLimit);
+        float clampedPitch = MathHelper.clamp(pitchDelta, -pitchLimit, pitchLimit);
+        float interp = MathHelper.clamp(randomBetween(followStrength, followStrength + 0.2f), 0.0f, 1.0f);
+        float newYaw = MathHelper.lerp(interp, curYaw, curYaw + clampedYaw);
+        float newPitch = MathHelper.lerp(interp, curPitch, curPitch + clampedPitch);
+
+        // Паттерн шума (ground)
+        long elapsed = System.currentTimeMillis() - attackTimerStart;
+        boolean attackFinished = elapsed > 1000;
+        int pattern = hitCount % 3;
+        float patternTime = elapsed / 40.0f + (hitCount % 6);
+        Turns offset = switch (pattern) {
+            case 0 -> new Turns((float) Math.cos(patternTime), (float) Math.sin(patternTime));
+            case 1 -> new Turns((float) Math.sin(patternTime), (float) Math.cos(patternTime));
+            case 2 -> new Turns((float) Math.sin(patternTime), (float) -Math.cos(patternTime));
+            default -> new Turns((float) -Math.cos(patternTime), (float) Math.sin(patternTime));
+        };
+
+        boolean applyBoost = shouldApplyBoostJitter();
+        if (applyBoost) lastBoostHitCount = hitCount;
+
+        float yawNoise, pitchNoise;
+        if (applyBoost) {
+            float noiseScale = randomBetween(323232.0f, 298.0f) * Math.abs((float) Math.cos(System.currentTimeMillis() / 2000.0));
+            yawNoise = !attackFinished ? randomBetween(25.0f, 26.0f) * offset.yaw : 0.0f;
+            pitchNoise = !attackFinished ? -randomBetween(232.0f, 232323.0f) * Math.abs(offset.pitch) * noiseScale : 0.0f;
+        } else {
+            yawNoise = !attackFinished ? randomBetween(9.0f, 15.0f) * offset.yaw : 0.0f;
+            pitchNoise = !attackFinished ? randomBetween(2.0f, 7.0f) * offset.pitch : 0.0f;
+        }
+
+        // Вторичное ограничение (noiseScale для yaw/pitch)
+        float noiseScale2 = Math.abs(yawDelta / totalDelta) * 180.0f;
+        float pitchScale2 = Math.abs(pitchDelta / totalDelta) * 180.0f;
+        float clampedYaw2 = MathHelper.clamp(yawDelta, -noiseScale2, noiseScale2);
+        float clampedPitch2 = MathHelper.clamp(pitchDelta, -pitchScale2, pitchScale2);
+        float interp2 = MathHelper.clamp(randomBetween(-1.0f, -0.8f), 0.0f, 1.0f); // как baseInterpolation = -1.0f? Но по коду берем из attackTimer.finished(1000)? Упростим: если attackFinished то 1.0, иначе -1.0
+        float baseInterp = attackFinished ? 1.0f : -1.0f;
+        float interpFinal = MathHelper.clamp(randomBetween(baseInterp, baseInterp + 0.2f), 0.0f, 1.0f);
+        float finalYaw = MathHelper.lerp(interpFinal, curYaw, curYaw + clampedYaw2) + yawNoise;
+        float finalPitch = MathHelper.lerp(interpFinal, curPitch, curPitch + clampedPitch2) + pitchNoise;
+        finalPitch = applyBoost ? MathHelper.clamp(finalPitch, -89.0f, 90.0f) : MathHelper.clamp(finalPitch, -89.0f, 89.0f);
+        return new Turns(finalYaw, finalPitch);
+    }
+
+    private static Turns buildAirRotation(float curYaw, float curPitch, float targetYaw, float targetPitch,
+                                          float yawDelta, float pitchDelta, float totalDelta) {
+        boolean instantTrack = target != null && (System.currentTimeMillis() - lastAttackTime) < 500;
+        float followStrength = instantTrack ? 1.0f : (RANDOM.nextBoolean() ? 1.2f : 2.0f);
+        float yawLimit = Math.abs(yawDelta / totalDelta) * 180.0f;
+        float pitchLimit = Math.abs(pitchDelta / totalDelta) * 180.0f;
+        float clampedYaw = MathHelper.clamp(yawDelta, -yawLimit, yawLimit);
+        float clampedPitch = MathHelper.clamp(pitchDelta, -pitchLimit, pitchLimit);
+        float interp = MathHelper.clamp(randomBetween(followStrength, followStrength + 0.2f), 0.0f, 1.0f);
+        float newYaw = MathHelper.lerp(interp, curYaw, curYaw + clampedYaw);
+        float newPitch = MathHelper.lerp(interp, curPitch, curPitch + clampedPitch);
+
+        long elapsed = System.currentTimeMillis() - attackTimerStart;
+        boolean attackFinished = elapsed > 1000;
+        int pattern = hitCount % 3;
+        float patternTime = elapsed / 40.0f + (hitCount % 6);
+        Turns offset = switch (pattern) {
+            case 0 -> new Turns((float) Math.cos(patternTime), (float) Math.sin(patternTime));
+            case 1 -> new Turns((float) Math.sin(patternTime), (float) Math.cos(patternTime));
+            case 2 -> new Turns((float) Math.sin(patternTime), (float) -Math.cos(patternTime));
+            default -> new Turns((float) -Math.cos(patternTime), (float) Math.sin(patternTime));
+        };
+
+        boolean applyBoost = shouldApplyBoostJitter();
+        if (applyBoost) lastBoostHitCount = hitCount;
+
+        float yawNoise, pitchNoise;
+        if (applyBoost) {
+            float noiseScale = randomBetween(25.0f, 32.0f) * Math.abs((float) Math.cos(System.currentTimeMillis() / 2000.0));
+            yawNoise = !attackFinished ? randomBetween(6.0f, 10.0f) * offset.yaw : 0.0f;
+            pitchNoise = !attackFinished ? -randomBetween(25.0f, 35.0f) * Math.abs(offset.pitch) * noiseScale : 0.0f;
+        } else {
+            yawNoise = !attackFinished ? randomBetween(20.0f, 26.0f) * offset.yaw : 0.0f;
+            pitchNoise = !attackFinished ? randomBetween(2.0f, 5.0f) * offset.pitch : 0.0f;
+        }
+
+        float noiseScale2 = Math.abs(yawDelta / totalDelta) * 180.0f;
+        float pitchScale2 = Math.abs(pitchDelta / totalDelta) * 180.0f;
+        float clampedYaw2 = MathHelper.clamp(yawDelta, -noiseScale2, noiseScale2);
+        float clampedPitch2 = MathHelper.clamp(pitchDelta, -pitchScale2, pitchScale2);
+        float baseInterp = attackFinished ? randomBetween(0.21f, 0.31f) : randomBetween(0.15f, 0.11f);
+        float interpFinal = MathHelper.clamp(randomBetween(baseInterp, baseInterp + 0.15f), 0.0f, 1.0f);
+        float finalYaw = MathHelper.lerp(interpFinal, curYaw, curYaw + clampedYaw2) + yawNoise;
+        float finalPitch = MathHelper.lerp(interpFinal, curPitch, curPitch + clampedPitch2) + pitchNoise;
+        finalPitch = applyBoost ? MathHelper.clamp(finalPitch, -89.0f, 90.0f) : MathHelper.clamp(finalPitch, -89.0f, 89.0f);
+        return new Turns(finalYaw, finalPitch);
+    }
+
+    private static boolean shouldApplyBoostJitter() {
+        return hitCount > 0 && (hitCount % 20) * RAND.nextFloat() == 0.0f && hitCount != lastBoostHitCount;
+    }
+
+    private static float randomBetween(float min, float max) {
+        return MathHelper.lerp(RANDOM.nextFloat(), min, max);
+    }
+
+    private static void updateTarget() {
+        if (target != null && target.isAlive() && mc.player.squaredDistanceTo(target) <= RANGE * RANGE) return;
+        Entity best = null;
+        double closest = RANGE * RANGE;
+        Box box = mc.player.getBoundingBox().expand(RANGE);
+        List<Entity> entities = mc.world.getOtherEntities(mc.player, box,
+                e -> e instanceof LivingEntity && e != mc.player && ((LivingEntity) e).isAlive());
+        for (Entity e : entities) {
+            if (e instanceof PlayerEntity && mc.player.isTeammate((PlayerEntity) e)) continue;
+            double dist = mc.player.squaredDistanceTo(e);
+            if (dist < closest && mc.player.canSee(e)) {
+                closest = dist;
+                best = e;
+            }
+        }
+        target = best;
+    }
+
+    private static float wrap(float v) { v %= 360f; if (v >= 180f) v -= 360f; if (v < -180f) v += 360f; return v; }
+    private static float clamp(float v, float min, float max) { return Math.max(min, Math.min(max, v)); }
+
+    static class Turns { float yaw, pitch; Turns(float y, float p) { yaw = y; pitch = p; } }
 }
