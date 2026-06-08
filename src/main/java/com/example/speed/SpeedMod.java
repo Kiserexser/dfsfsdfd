@@ -4,14 +4,10 @@ import net.fabricmc.api.ModInitializer;
 import net.minecraft.client.MinecraftClient;
 import net.minecraft.client.gui.DrawContext;
 import net.minecraft.client.gui.screen.Screen;
-import net.minecraft.client.gui.widget.ButtonWidget;
 import net.minecraft.text.Text;
-import net.minecraft.util.Identifier;
 import org.lwjgl.glfw.GLFW;
 
-import java.awt.*;
 import java.util.*;
-import java.util.List;
 
 public class SpeedMod implements ModInitializer {
     private static final MinecraftClient mc = MinecraftClient.getInstance();
@@ -43,8 +39,6 @@ public class SpeedMod implements ModInitializer {
         );
         private final Map<String, List<String>> modules = new LinkedHashMap<>();
         private final Map<String, Boolean> toggles = new HashMap<>();
-
-        // Для анимации прокрутки (колёсико мыши)
         private int mouseScroll = 0;
 
         protected ModernGUI() {
@@ -71,28 +65,23 @@ public class SpeedMod implements ModInitializer {
 
         @Override
         public void render(DrawContext context, int mouseX, int mouseY, float delta) {
-            // Полупрозрачный тёмный фон
             context.fill(0, 0, width, height, 0xCC000000);
-            // Панель категорий (слева)
             int catWidth = 140;
             int catHeight = 28;
             int startX = 20;
             int startY = 40;
             context.fill(startX - 5, startY - 5, startX + catWidth + 5, height - 20, 0xAA151515);
-            // Рисуем категории
             for (int i = 0; i < categories.size(); i++) {
                 int y = startY + i * catHeight;
                 boolean hover = mouseX >= startX && mouseX <= startX + catWidth && mouseY >= y && mouseY <= y + catHeight;
                 int bgColor = (i == selectedCategory) ? 0xFF3A6EA5 : (hover ? 0xFF2C2C2C : 0xFF1E1E1E);
                 context.fill(startX, y, startX + catWidth, y + catHeight, bgColor);
-                // Акцентная полоска слева у выбранной категории
                 if (i == selectedCategory) {
                     context.fill(startX, y, startX + 4, y + catHeight, 0xFF69B4FF);
                 }
-                context.drawCentumedText(textRenderer, categories.get(i), startX + catWidth / 2, y + (catHeight - 8) / 2, 0xFFFFFF, false);
+                context.drawCenteredText(textRenderer, categories.get(i), startX + catWidth / 2, y + (catHeight - 8) / 2, 0xFFFFFF, false);
             }
 
-            // Правая панель: модули
             int rightX = startX + catWidth + 15;
             int rightWidth = width - rightX - 20;
             int moduleHeight = 26;
@@ -102,7 +91,6 @@ public class SpeedMod implements ModInitializer {
                 int visibleCount = (height - startY - 20) / moduleHeight;
                 int maxScroll = Math.max(0, modList.size() - visibleCount);
                 scrollOffset = Math.max(0, Math.min(scrollOffset, maxScroll));
-                // Обработка колёсика мыши (mouseScroll уже установлен в mouseScrolled)
                 if (mouseScroll != 0) {
                     scrollOffset -= mouseScroll;
                     mouseScroll = 0;
@@ -115,25 +103,19 @@ public class SpeedMod implements ModInitializer {
                     boolean state = toggles.getOrDefault(modName, false);
                     int bgColor = hover ? 0xFF2D2D2D : 0xFF1A1A1A;
                     context.fill(rightX, y, rightX + rightWidth, y + moduleHeight, bgColor);
-                    // Название модуля
                     context.drawText(textRenderer, modName, rightX + 8, y + (moduleHeight - 8) / 2, 0xE0E0E0, false);
-                    // Рисуем переключатель (ON/OFF)
                     String toggleText = state ? "ON" : "OFF";
                     int toggleColor = state ? 0xFF55FF55 : 0xFFFF5555;
                     context.drawText(textRenderer, toggleText, rightX + rightWidth - 40, y + (moduleHeight - 8) / 2, toggleColor, false);
-                    // Обработка клика (через checkClick)
                 }
             }
-
-            // Заголовок
-            context.drawCentumTextWithShadow(textRenderer, "SpeedMod", width / 2, 12, 0xFFFFFF);
+            context.drawCenteredTextWithShadow(textRenderer, Text.literal("SpeedMod"), width / 2, 12, 0xFFFFFF);
             super.render(context, mouseX, mouseY, delta);
         }
 
         @Override
         public boolean mouseClicked(double mouseX, double mouseY, int button) {
             if (button == GLFW.GLFW_MOUSE_BUTTON_LEFT) {
-                // Клик по категориям
                 int catWidth = 140;
                 int startX = 20;
                 int startY = 40;
@@ -146,7 +128,6 @@ public class SpeedMod implements ModInitializer {
                         return true;
                     }
                 }
-                // Клик по модулям (переключение)
                 int rightX = startX + catWidth + 15;
                 int rightWidth = width - rightX - 20;
                 int moduleHeight = 26;
