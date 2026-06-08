@@ -7,7 +7,12 @@ import net.minecraft.client.gui.screen.Screen;
 import net.minecraft.text.Text;
 import org.lwjgl.glfw.GLFW;
 
-import java.awt.*;
+import java.awt.Color;
+import java.awt.Font;
+import java.awt.FontMetrics;
+import java.awt.Graphics;
+import java.awt.Graphics2D;
+import java.awt.RenderingHints;
 import java.lang.reflect.Field;
 import java.util.*;
 
@@ -40,10 +45,9 @@ public class SpeedMod implements ModInitializer {
         private static final int WIN_H = 300;
         private int winX, winY;
 
-        private final List<String> categories = Arrays.asList("Combat", "Movement", "Visuals", "Player", "Misc");
-        private final Map<String, List<ModuleEntry>> modules = new LinkedHashMap<>();
+        private final java.util.List<String> categories = Arrays.asList("Combat", "Movement", "Visuals", "Player", "Misc");
+        private final Map<String, java.util.List<ModuleEntry>> modules = new LinkedHashMap<>();
 
-        // AWT шрифты (гладкие)
         private Font titleFont, categoryFont, moduleNameFont, descFont;
 
         protected LinxesGUI() {
@@ -53,7 +57,6 @@ public class SpeedMod implements ModInitializer {
         }
 
         private void initFonts() {
-            // Пытаемся использовать системные шрифты
             titleFont = new Font("Segoe UI", Font.BOLD, 24);
             if (titleFont.getFamily().equals("Dialog")) titleFont = new Font("Arial", Font.BOLD, 24);
             categoryFont = new Font("Segoe UI", Font.BOLD, 16);
@@ -89,23 +92,18 @@ public class SpeedMod implements ModInitializer {
 
         @Override
         public void render(DrawContext ctx, int mouseX, int mouseY, float delta) {
-            // Рисуем окно
             drawRoundedWindow(ctx, winX, winY, WIN_W, WIN_H, 14, 0xEE1E1E1E);
 
-            // Получаем Graphics2D через рефлексию (безопасно)
             Graphics2D g = getGraphics2D(ctx);
             if (g == null) return;
 
-            // Включаем сглаживание
             g.setRenderingHint(RenderingHints.KEY_TEXT_ANTIALIASING, RenderingHints.VALUE_TEXT_ANTIALIAS_ON);
             g.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
 
-            // Заголовок
             g.setFont(titleFont);
             g.setColor(Color.WHITE);
             drawCenteredString(g, "Linxes", winX + WIN_W / 2, winY + 28);
 
-            // Категории (равные отступы)
             int catStartX = winX + 30;
             int catW = 80;
             int spacing = (WIN_W - 60 - categories.size() * catW) / (categories.size() - 1);
@@ -125,7 +123,6 @@ public class SpeedMod implements ModInitializer {
                 }
             }
 
-            // Список модулей (с прокруткой)
             int listX = winX + 15;
             int listY = winY + 85;
             int listW = WIN_W - 30;
@@ -133,7 +130,7 @@ public class SpeedMod implements ModInitializer {
             Shape oldClip = g.getClip();
             g.setClip(listX, listY, listW, listH);
 
-            List<ModuleEntry> modList = modules.get(categories.get(selectedCategory));
+            java.util.List<ModuleEntry> modList = modules.get(categories.get(selectedCategory));
             if (modList != null) {
                 int itemH = 46;
                 int visible = listH / itemH;
@@ -158,7 +155,6 @@ public class SpeedMod implements ModInitializer {
             }
             g.setClip(oldClip);
 
-            // Нижняя строка
             g.setFont(descFont);
             g.setColor(Color.LIGHT_GRAY);
             drawCenteredString(g, "Linxes Client", winX + WIN_W / 2, winY + WIN_H - 12);
@@ -225,7 +221,7 @@ public class SpeedMod implements ModInitializer {
         @Override
         public boolean mouseScrolled(double mx, double my, double horiz, double vert) {
             int delta = (int) Math.signum(vert);
-            List<ModuleEntry> modList = modules.get(categories.get(selectedCategory));
+            java.util.List<ModuleEntry> modList = modules.get(categories.get(selectedCategory));
             if (modList != null) {
                 int visible = (WIN_H - 105) / 46;
                 int maxScroll = Math.max(0, modList.size() - visible);
