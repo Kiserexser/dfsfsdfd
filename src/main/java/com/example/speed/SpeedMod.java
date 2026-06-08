@@ -8,10 +8,8 @@ import net.minecraft.text.Text;
 import org.lwjgl.glfw.GLFW;
 
 import java.awt.*;
-import java.awt.font.FontRenderContext;
-import java.awt.geom.Rectangle2D;
+import java.lang.reflect.Field;
 import java.util.*;
-import java.util.List;
 
 public class SpeedMod implements ModInitializer {
     private static final MinecraftClient mc = MinecraftClient.getInstance();
@@ -45,11 +43,8 @@ public class SpeedMod implements ModInitializer {
         private final List<String> categories = Arrays.asList("Combat", "Movement", "Visuals", "Player", "Misc");
         private final Map<String, List<ModuleEntry>> modules = new LinkedHashMap<>();
 
-        // Шрифты AWT (гладкие)
-        private Font titleFont;
-        private Font categoryFont;
-        private Font moduleNameFont;
-        private Font descFont;
+        // AWT шрифты (гладкие)
+        private Font titleFont, categoryFont, moduleNameFont, descFont;
 
         protected LinxesGUI() {
             super(Text.literal("Linxes"));
@@ -58,14 +53,11 @@ public class SpeedMod implements ModInitializer {
         }
 
         private void initFonts() {
-            // Используем системный шрифт с запасными вариантами
-            // Жирный, размер 22 для заголовка
+            // Пытаемся использовать системные шрифты
             titleFont = new Font("Segoe UI", Font.BOLD, 24);
-            // Если Segoe UI нет, используем Arial или SansSerif
-            if (titleFont.getFamily().equals("Dialog")) {
-                titleFont = new Font("Arial", Font.BOLD, 24);
-            }
+            if (titleFont.getFamily().equals("Dialog")) titleFont = new Font("Arial", Font.BOLD, 24);
             categoryFont = new Font("Segoe UI", Font.BOLD, 16);
+            if (categoryFont.getFamily().equals("Dialog")) categoryFont = new Font("Arial", Font.BOLD, 16);
             moduleNameFont = new Font("Segoe UI", Font.BOLD, 15);
             descFont = new Font("Segoe UI", Font.PLAIN, 13);
         }
@@ -97,89 +89,97 @@ public class SpeedMod implements ModInitializer {
 
         @Override
         public void render(DrawContext ctx, int mouseX, int mouseY, float delta) {
-            // Прозрачный фон, только окно
+            // Рисуем окно
             drawRoundedWindow(ctx, winX, winY, WIN_W, WIN_H, 14, 0xEE1E1E1E);
 
-            // Используем Graphics2D для рисования гладкого текста
-            Graphics2D g = (Graphics2D) ctx.getGraphics().getNatives();
-            if (g != null) {
-                g.setRenderingHint(RenderingHints.KEY_TEXT_ANTIALIASING, RenderingHints.VALUE_TEXT_ANTIALIAS_ON);
-                g.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
+            // Получаем Graphics2D через рефлексию (безопасно)
+            Graphics2D g = getGraphics2D(ctx);
+            if (g == null) return;
 
-                // Заголовок
-                g.setFont(titleFont);
-                g.setColor(Color.WHITE);
-                drawCenteredString(g, "Linxes", winX + WIN_W / 2, winY + 28);
+            // Включаем сглаживание
+            g.setRenderingHint(RenderingHints.KEY_TEXT_ANTIALIASING, RenderingHints.VALUE_TEXT_ANTIALIAS_ON);
+            g.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
 
-                // Категории
-                int catStartX = winX + 30;
-                int catW = 80;
-                int spacing = (WIN_W - 60 - categories.size() * catW) / (categories.size() - 1);
-                if (spacing < 20) spacing = 20;
-                int catY = winY + 50;
-                g.setFont(categoryFont);
-                for (int i = 0; i < categories.size(); i++) {
-                    int x = catStartX + i * (catW + spacing);
-                    boolean hover = mouseX >= x && mouseX <= x + catW && mouseY >= catY && mouseY <= catY + 20;
-                    Color color = (selectedCategory == i) ? Color.WHITE : (hover ? Color.LIGHT_GRAY : Color.GRAY);
-                    g.setColor(color);
-                    drawCenteredString(g, categories.get(i), x + catW / 2, catY + 5);
-                    if (selectedCategory == i) {
-                        int textWidth = getStringWidth(g, categories.get(i));
-                        g.setColor(new Color(0x69B4FF));
-                        g.fillRect(x + (catW - textWidth) / 2, catY + 20, textWidth, 2);
-                    }
+            // Заголовок
+            g.setFont(titleFont);
+            g.setColor(Color.WHITE);
+            drawCenteredString(g, "Linxes", winX + WIN_W / 2, winY + 28);
+
+            // Категории (равные отступы)
+            int catStartX = winX + 30;
+            int catW = 80;
+            int spacing = (WIN_W - 60 - categories.size() * catW) / (categories.size() - 1);
+            if (spacing < 20) spacing = 20;
+            int catY = winY + 50;
+            g.setFont(categoryFont);
+            for (int i = 0; i < categories.size(); i++) {
+                int x = catStartX + i * (catW + spacing);
+                boolean hover = mouseX >= x && mouseX <= x + catW && mouseY >= catY && mouseY <= catY + 20;
+                Color color = (selectedCategory == i) ? Color.WHITE : (hover ? Color.LIGHT_GRAY : Color.GRAY);
+                g.setColor(color);
+                drawCenteredString(g, categories.get(i), x + catW / 2, catY + 5);
+                if (selectedCategory == i) {
+                    int textWidth = g.getFontMetrics().stringWidth(categories.get(i));
+                    g.setColor(new Color(0x69B4FF));
+                    g.fillRect(x + (catW - textWidth) / 2, catY + 20, textWidth, 2);
                 }
-
-                // Список модулей
-                int listX = winX + 15;
-                int listY = winY + 85;
-                int listW = WIN_W - 30;
-                int listH = WIN_H - 105;
-                // Clip для прокрутки
-                g.setClip(listX, listY, listW, listH);
-
-                List<ModuleEntry> modList = modules.get(categories.get(selectedCategory));
-                if (modList != null) {
-                    int itemH = 46;
-                    int visible = listH / itemH;
-                    int maxScroll = Math.max(0, modList.size() - visible);
-                    scrollOffset = Math.max(0, Math.min(scrollOffset, maxScroll));
-
-                    for (int i = 0; i < visible && scrollOffset + i < modList.size(); i++) {
-                        ModuleEntry entry = modList.get(scrollOffset + i);
-                        int y = listY + i * itemH;
-                        boolean hover = mouseX >= listX && mouseX <= listX + listW && mouseY >= y && mouseY <= y + itemH;
-                        if (hover) {
-                            g.setColor(new Color(0x33FFFFFF, true));
-                            g.fillRect(listX, y, listW, itemH);
-                        }
-                        g.setFont(moduleNameFont);
-                        g.setColor(Color.WHITE);
-                        drawString(g, entry.name, listX + 10, y + 14);
-                        g.setFont(descFont);
-                        g.setColor(new Color(0xAAAAAA));
-                        drawString(g, entry.description, listX + 10, y + 32);
-                    }
-                }
-                g.setClip(null);
             }
 
-            // super.render не вызываем
+            // Список модулей (с прокруткой)
+            int listX = winX + 15;
+            int listY = winY + 85;
+            int listW = WIN_W - 30;
+            int listH = WIN_H - 105;
+            Shape oldClip = g.getClip();
+            g.setClip(listX, listY, listW, listH);
+
+            List<ModuleEntry> modList = modules.get(categories.get(selectedCategory));
+            if (modList != null) {
+                int itemH = 46;
+                int visible = listH / itemH;
+                int maxScroll = Math.max(0, modList.size() - visible);
+                scrollOffset = Math.max(0, Math.min(scrollOffset, maxScroll));
+
+                for (int i = 0; i < visible && scrollOffset + i < modList.size(); i++) {
+                    ModuleEntry entry = modList.get(scrollOffset + i);
+                    int y = listY + i * itemH;
+                    boolean hover = mouseX >= listX && mouseX <= listX + listW && mouseY >= y && mouseY <= y + itemH;
+                    if (hover) {
+                        g.setColor(new Color(0x33FFFFFF, true));
+                        g.fillRect(listX, y, listW, itemH);
+                    }
+                    g.setFont(moduleNameFont);
+                    g.setColor(Color.WHITE);
+                    g.drawString(entry.name, listX + 10, y + 14);
+                    g.setFont(descFont);
+                    g.setColor(new Color(0xAAAAAA));
+                    g.drawString(entry.description, listX + 10, y + 32);
+                }
+            }
+            g.setClip(oldClip);
+
+            // Нижняя строка
+            g.setFont(descFont);
+            g.setColor(Color.LIGHT_GRAY);
+            drawCenteredString(g, "Linxes Client", winX + WIN_W / 2, winY + WIN_H - 12);
         }
 
-        private void drawString(Graphics2D g, String s, int x, int y) {
-            g.drawString(s, x, y);
+        private Graphics2D getGraphics2D(DrawContext ctx) {
+            try {
+                Field graphicsField = DrawContext.class.getDeclaredField("graphics");
+                graphicsField.setAccessible(true);
+                Object graphicsObj = graphicsField.get(ctx);
+                if (graphicsObj instanceof Graphics2D) return (Graphics2D) graphicsObj;
+                return null;
+            } catch (Exception e) {
+                return null;
+            }
         }
 
         private void drawCenteredString(Graphics2D g, String s, int x, int y) {
             FontMetrics fm = g.getFontMetrics();
             int w = fm.stringWidth(s);
-            g.drawString(s, x - w / 2, y + fm.getAscent() - 1);
-        }
-
-        private int getStringWidth(Graphics2D g, String s) {
-            return g.getFontMetrics().stringWidth(s);
+            g.drawString(s, x - w / 2, y + fm.getAscent());
         }
 
         private void drawRoundedWindow(DrawContext ctx, int x, int y, int w, int h, int r, int color) {
