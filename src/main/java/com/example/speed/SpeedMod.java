@@ -9,12 +9,6 @@ public class SpeedMod implements ModInitializer {
     private static final MinecraftClient mc = MinecraftClient.getInstance();
     private static boolean enabled = false;
     private static boolean lastR = false;
-    private static int jumpDelay = 0; // для автопрыжка
-
-    // Настройки (подбери под сервер)
-    private static final double SPEED_MULTIPLIER = 1.35;  // множитель скорости (1.0 = норма, 1.35 = +35%)
-    private static final boolean AUTO_JUMP = true;       // автопрыжок (BHop)
-    private static final int JUMP_DELAY_TICKS = 2;       // задержка между прыжками (в тиках)
 
     @Override
     public void onInitialize() {
@@ -27,7 +21,7 @@ public class SpeedMod implements ModInitializer {
                 boolean currentR = GLFW.glfwGetKey(window, GLFW.GLFW_KEY_R) == GLFW.GLFW_PRESS;
                 if (currentR && !lastR) {
                     enabled = !enabled;
-                    mc.player.sendMessage(Text.literal(enabled ? "§aNormalSpeed ON" : "§cNormalSpeed OFF"), true);
+                    mc.player.sendMessage(Text.literal(enabled ? "§aLegitSpeed ON" : "§cLegitSpeed OFF"), true);
                     try { Thread.sleep(200); } catch (InterruptedException ignored) {}
                 }
                 lastR = currentR;
@@ -42,33 +36,33 @@ public class SpeedMod implements ModInitializer {
     private void tick() {
         if (mc.player == null) return;
 
-        // ----- Автопрыжок (BHop) -----
-        if (AUTO_JUMP) {
-            if (mc.player.isOnGround() && mc.options.jumpKey.isPressed() && jumpDelay <= 0) {
-                mc.player.jump();
-                jumpDelay = JUMP_DELAY_TICKS;
-            }
-            if (jumpDelay > 0) jumpDelay--;
+        // 1. Автоспринт (если зажат W)
+        if (mc.player.input.movementForward > 0) {
+            mc.player.setSprinting(true);
         }
 
-        // ----- Ускорение -----
-        float forward = mc.player.input.movementForward;
-        if (forward <= 0) return; // ускоряем только если идём вперёд
+        // 2. No Sprint Reset (сохраняем спринт после атаки)
+        // Просто каждый тик форсируем спринт, если нужно
+        if (mc.player.input.movementForward > 0 && mc.player.isSprinting()) {
+            // ничего не делаем, спринт уже включён
+        }
 
-        // Получаем текущую скорость
-        double currentSpeed = Math.hypot(mc.player.getVelocity().x, mc.player.getVelocity().z);
-        double maxSpeed = 0.3 * SPEED_MULTIPLIER; // базовая скорость спринта 0.3
-
-        if (currentSpeed < maxSpeed) {
-            // Плавно добавляем скорость
+        // 3. Лёгкий Strafe (улучшение поворотов) – очень мягко
+        if (mc.player.isSprinting() && mc.player.isOnGround()) {
             float yaw = mc.player.getYaw();
-            double rad = Math.toRadians(yaw);
-            double addX = -Math.sin(rad) * 0.02;
-            double addZ = Math.cos(rad) * 0.02;
-            mc.player.addVelocity(addX, 0, addZ);
+            float forward = mc.player.input.movementForward;
+            float strafe = mc.player.input.movementSideways;
+            if (forward > 0 && strafe == 0) {
+                // Идеальный поворот: если игрок поворачивает, не замедляться
+                // В ваниле при повороте скорость снижается, мы это компенсируем
+                double currentSpeed = Math.hypot(mc.player.getVelocity().x, mc.player.getVelocity().z);
+                double idealSpeed = 0.32; // ванильный спринт
+                if (currentSpeed < idealSpeed - 0.02) {
+                    // Добавляем микро-импульс только если скорость упала ниже нормы
+                    double rad = Math.toRadians(yaw);
+                    mc.player.addVelocity(-Math.sin(rad) * 0.005, 0, Math.cos(rad) * 0.005);
+                }
+            }
         }
-
-        // Автоспринт
-        if (forward > 0) mc.player.setSprinting(true);
     }
 }
