@@ -28,14 +28,66 @@ public class SpeedMod implements ModInitializer {
     private static final long MIN_DELAY_MS = 820;
     private static final long MAX_DELAY_MS = 930;
 
+    // Класс для плавного возврата углов
+    private static class Rotation {
+        private float currentYaw;
+        private float currentPitch;
+        private boolean initialized = false;
+
+        public void init(MinecraftClient client) {
+            if (!initialized) {
+                currentYaw = client.player.getYaw();
+                currentPitch = client.player.getPitch();
+                initialized = true;
+            }
+        }
+
+        // Вызывается каждый тик
+        public void update(MinecraftClient client) {
+            if (!initialized) init(client);
+
+            if (target == null) {
+                // Интерполяция к реальным углам игрока (скорость 10% за тик)
+                float realYaw = client.player.getYaw();
+                float realPitch = client.player.getPitch();
+                currentYaw += (realYaw - currentYaw) * 0.1f;
+                currentPitch += (realPitch - currentPitch) * 0.1f;
+                currentYaw = wrapDegrees(currentYaw);
+                currentPitch = clamp(currentPitch, -89, 89);
+                // Не отправляем пакеты поворота, когда нет цели
+                return;
+            }
+
+            // Вычисляем углы на цель
+            Vec3d eyePos = client.player.getEyePos();
+            Vec3d targetVec = target.getBoundingBox().getCenter().subtract(eyePos);
+            double hyp = Math.hypot(targetVec.x, targetVec.z);
+            float idealYaw = (float) (Math.toDegrees(Math.atan2(targetVec.z, targetVec.x)) - 90);
+            float idealPitch = (float) -Math.toDegrees(Math.atan2(targetVec.y, hyp));
+            idealYaw = wrapDegrees(idealYaw);
+            idealPitch = clamp(idealPitch, -89, 89);
+
+            // Плавно двигаем current углы к идеальным (20% за тик, но можно менять)
+            currentYaw += (idealYaw - currentYaw) * 0.2f;
+            currentPitch += (idealPitch - currentPitch) * 0.2f;
+            currentYaw = wrapDegrees(currentYaw);
+            currentPitch = clamp(currentPitch, -89, 89);
+
+            // Отправляем silent look (другие видят этот поворот, ты – нет)
+            sendSilentLook(client, currentYaw, currentPitch);
+        }
+    }
+
+    private static final Rotation rotation = new Rotation();
+
     @Override
     public void onInitialize() {
-        LOGGER.info("[SpeedMod] Silent Aim Killaura (others see your aim, you don't). Press R to toggle.");
+        LOGGER.info("[SpeedMod] Silent Aim + smooth return. Press R.");
 
         Thread tickThread = new Thread(() -> {
             while (true) {
                 try {
-                    Thread.sleep(50); // 20 тиков в секунду
+                    Thread.sleep(50);
                     MinecraftClient client = MinecraftClient.getInstance();
                     if (client.player == null || client.world == null) continue;
 
@@ -44,8 +96,8 @@ public class SpeedMod implements ModInitializer {
 
                     if (currentR && !lastRState) {
                         enabled = !enabled;
-                        LOGGER.info(enabled ? "[Killaura] ENABLED (silent aim)" : "[Killaura] DISABLED");
-                        target = null;
+                        LOGGER.info(enabled ? "Killaura ON" : "Killaura OFF");
+                        if (!enabled) target = null;
                         Thread.sleep(150);
                     }
                     lastRState = currentR;
@@ -63,27 +115,41 @@ public class SpeedMod implements ModInitializer {
     }
 
     private static void tick(MinecraftClient client) {
+        // Обновляем цель
         updateTarget(client);
-        if (target == null) return;
 
-        // Отправляем серверу пакет поворота на цель (без изменения локальной камеры)
-        sendSilentLook(client);
+        // Проверка жива ли цель
+        if (target != null && target instanceof LivingEntity && ((LivingEntity) target).isDead()) {
+            target = null;
+        }
 
-        // Задержка атаки
-        long now = System.currentTimeMillis();
-        long delay = MIN_DELAY_MS + (long)(random.nextDouble() * (MAX_DELAY_MS - MIN_DELAY_MS));
-        if (now - lastAttackTime < delay) return;
+        // Инициализируем ротацию
+        rotation.init(client);
 
-        // Атака с сохранением спринта
-        boolean wasSprinting = client.player.isSprinting();
-        client.interactionManager.attackEntity(client.player, target);
-        if (wasSprinting) client.player.setSprinting(true);
-        client.player.setSprinting(true);
+        // Вызываем update – он сам отправит silent look, если цель есть, или интерполирует к реальным углам
+        rotation.update(client);
 
-        lastAttackTime = now;
+        // Атака только если цель есть и задержка прошла
+        if (target != null) {
+            long now = System.currentTimeMillis();
+            long delay = MIN_DELAY_MS + (long)(random.nextDouble() * (MAX_DELAY_MS - MIN_DELAY_MS));
+            if (now - lastAttackTime >= delay) {
+                boolean wasSprinting = client.player.isSprinting();
+                client.interactionManager.attackEntity(client.player, target);
+                if (wasSprinting) client.player.setSprinting(true);
+                client.player.setSprinting(true);
+                lastAttackTime = now;
+            }
+        }
     }
 
     private static void updateTarget(MinecraftClient client) {
+        // Если цель ещё жива и существует – не переключаем
+        if (target != null && target.isAlive() && client.player.squaredDistanceTo(target) <= RANGE * RANGE) {
+            return;
+        }
+
+        // Иначе ищем новую
         Entity best = null;
         double closest = RANGE * RANGE;
 
@@ -94,7 +160,7 @@ public class SpeedMod implements ModInitializer {
         for (Entity e : entities) {
             if (e instanceof PlayerEntity && client.player.isTeammate((PlayerEntity) e)) continue;
             double distSq = client.player.squaredDistanceTo(e);
-            if (distSq < closest) {
+            if (distSq < closest && client.player.canSee(e)) {
                 closest = distSq;
                 best = e;
             }
@@ -102,26 +168,14 @@ public class SpeedMod implements ModInitializer {
         target = best;
     }
 
-    private static void sendSilentLook(MinecraftClient client) {
-        if (target == null) return;
+    private static void sendSilentLook(MinecraftClient client, float yaw, float pitch) {
         if (client.getNetworkHandler() == null) return;
-
-        Vec3d eyePos = client.player.getEyePos();
-        Vec3d targetVec = target.getBoundingBox().getCenter().subtract(eyePos);
-        double hyp = Math.hypot(targetVec.x, targetVec.z);
-        float yaw = (float) (Math.toDegrees(Math.atan2(targetVec.z, targetVec.x)) - 90);
-        float pitch = (float) -Math.toDegrees(Math.atan2(targetVec.y, hyp));
-
-        yaw = wrapDegrees(yaw);
-        pitch = clamp(pitch, -89.0F, 89.0F);
-
-        // Отправляем пакет поворота серверу (без изменения позиции)
-        PlayerMoveC2SPacket.LookAndOnGround packet = new PlayerMoveC2SPacket.LookAndOnGround(yaw, pitch, client.player.isOnGround());
+        PlayerMoveC2SPacket.LookAndOnGround packet = new PlayerMoveC2SPacket.LookAndOnGround(yaw, pitch, client.player.isOnGround(), false);
         client.getNetworkHandler().sendPacket(packet);
     }
 
     private static float wrapDegrees(float value) {
-        value = value % 360.0F;
+        value %= 360.0F;
         if (value >= 180.0F) value -= 360.0F;
         if (value < -180.0F) value += 360.0F;
         return value;
