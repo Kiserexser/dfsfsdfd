@@ -5,7 +5,6 @@ import net.minecraft.client.MinecraftClient;
 import net.minecraft.network.packet.c2s.play.ClientCommandC2SPacket;
 import net.minecraft.network.packet.c2s.play.PlayerMoveC2SPacket;
 import net.minecraft.text.Text;
-import net.minecraft.util.math.MathHelper;
 import org.lwjgl.glfw.GLFW;
 
 public class SpeedMod implements ModInitializer {
@@ -35,22 +34,18 @@ public class SpeedMod implements ModInitializer {
     private void tick() {
         if (mc.player == null || mc.getNetworkHandler() == null) return;
 
-        // 1. Принудительный прыжок (как в onInput)
-        // В оригинале e.setJumping(true) – мы не можем перехватить InputEvent, 
-        // но можем напрямую вызывать jump().
-        // Для имитации зажатого прыжка просто вызываем jump() каждый тик.
-        if (enabled) {
-            mc.player.jump();
-        }
+        // Принудительный прыжок (каждый тик)
+        mc.player.jump();
 
-        // 2. Отправка пакета статуса (StatusOnly) каждые 2 тика (onPreMotion)
+        // Отправка пакетов: обычный пакет движения (StatusOnly не существует)
         if (mc.player.age % 2 == 0) {
-            mc.getNetworkHandler().sendPacket(new PlayerMoveC2SPacket.StatusOnly(mc.player.isOnGround()));
-            // Отправляем пакет начала полёта на элитре
+            // В 1.21.4 пакет движения с флагом onGround
+            mc.getNetworkHandler().sendPacket(new PlayerMoveC2SPacket(mc.player.isOnGround()));
+            // Пакет активации элитры
             mc.getNetworkHandler().sendPacket(new ClientCommandC2SPacket(mc.player, ClientCommandC2SPacket.Mode.START_FALL_FLYING));
         }
 
-        // 3. Изменение скорости (onTick)
+        // Расчёт скорости (как в оригинале)
         float grim = 0.03f;
         grim *= mc.player.isOnGround() ? 2.8500699f : 1.0200699f;
 
@@ -62,7 +57,7 @@ public class SpeedMod implements ModInitializer {
             mc.player.addVelocity(mx, 0.0, mz);
         }
 
-        // Коррекция в воздухе (лёгкое замедление)
+        // Вертикальная коррекция в воздухе
         if (!mc.player.isOnGround()) {
             mc.player.addVelocity(0.0, -0.050699, 0.0);
         }
