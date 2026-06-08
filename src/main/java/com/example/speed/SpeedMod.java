@@ -7,7 +7,11 @@ import net.minecraft.client.gui.screen.Screen;
 import net.minecraft.text.Text;
 import org.lwjgl.glfw.GLFW;
 
+import java.awt.*;
+import java.awt.font.FontRenderContext;
+import java.awt.geom.Rectangle2D;
 import java.util.*;
+import java.util.List;
 
 public class SpeedMod implements ModInitializer {
     private static final MinecraftClient mc = MinecraftClient.getInstance();
@@ -34,16 +38,36 @@ public class SpeedMod implements ModInitializer {
     static class LinxesGUI extends Screen {
         private int selectedCategory = 0;
         private int scrollOffset = 0;
-        private static final int WIN_W = 360;
-        private static final int WIN_H = 260;
+        private static final int WIN_W = 520;
+        private static final int WIN_H = 300;
         private int winX, winY;
 
         private final List<String> categories = Arrays.asList("Combat", "Movement", "Visuals", "Player", "Misc");
         private final Map<String, List<ModuleEntry>> modules = new LinkedHashMap<>();
 
+        // Шрифты AWT (гладкие)
+        private Font titleFont;
+        private Font categoryFont;
+        private Font moduleNameFont;
+        private Font descFont;
+
         protected LinxesGUI() {
             super(Text.literal("Linxes"));
             initModules();
+            initFonts();
+        }
+
+        private void initFonts() {
+            // Используем системный шрифт с запасными вариантами
+            // Жирный, размер 22 для заголовка
+            titleFont = new Font("Segoe UI", Font.BOLD, 24);
+            // Если Segoe UI нет, используем Arial или SansSerif
+            if (titleFont.getFamily().equals("Dialog")) {
+                titleFont = new Font("Arial", Font.BOLD, 24);
+            }
+            categoryFont = new Font("Segoe UI", Font.BOLD, 16);
+            moduleNameFont = new Font("Segoe UI", Font.BOLD, 15);
+            descFont = new Font("Segoe UI", Font.PLAIN, 13);
         }
 
         private void initModules() {
@@ -73,62 +97,89 @@ public class SpeedMod implements ModInitializer {
 
         @Override
         public void render(DrawContext ctx, int mouseX, int mouseY, float delta) {
-            // Полностью заливаем экран тёмным цветом, чтобы перекрыть блюр клиента
-            ctx.fill(0, 0, width, height, 0xEE000000); // полупрозрачный чёрный (можно сделать 0xFF000000 для полной непрозрачности)
+            // Прозрачный фон, только окно
+            drawRoundedWindow(ctx, winX, winY, WIN_W, WIN_H, 14, 0xEE1E1E1E);
 
-            // Окно с закруглёнными углами
-            drawRoundedWindow(ctx, winX, winY, WIN_W, WIN_H, 12, 0xEE1E1E1E);
+            // Используем Graphics2D для рисования гладкого текста
+            Graphics2D g = (Graphics2D) ctx.getGraphics().getNatives();
+            if (g != null) {
+                g.setRenderingHint(RenderingHints.KEY_TEXT_ANTIALIASING, RenderingHints.VALUE_TEXT_ANTIALIAS_ON);
+                g.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
 
-            // Заголовок
-            ctx.drawCenteredTextWithShadow(textRenderer, Text.literal("Linxes"), winX + WIN_W / 2, winY + 8, 0xFFFFFF);
+                // Заголовок
+                g.setFont(titleFont);
+                g.setColor(Color.WHITE);
+                drawCenteredString(g, "Linxes", winX + WIN_W / 2, winY + 28);
 
-            // Категории
-            int catX = winX + 10;
-            int catY = winY + 32;
-            int catW = 56;
-            int catH = 16;
-            for (int i = 0; i < categories.size(); i++) {
-                int x = catX + i * (catW + 4);
-                boolean hover = mouseX >= x && mouseX <= x + catW && mouseY >= catY && mouseY <= catY + catH;
-                int color = (selectedCategory == i) ? 0xFFFFFF : (hover ? 0xCCCCCC : 0x888888);
-                ctx.drawText(textRenderer, categories.get(i), x, catY, color, false);
-                if (selectedCategory == i) {
-                    int w = textRenderer.getWidth(categories.get(i));
-                    ctx.fill(x, catY + catH - 1, x + w, catY + catH, 0xFF69B4FF);
-                }
-            }
-
-            // Список модулей
-            int listX = winX + 10;
-            int listY = winY + 55;
-            int listW = WIN_W - 20;
-            int listH = WIN_H - 75;
-            ctx.enableScissor(listX, listY, listX + listW, listY + listH);
-
-            List<ModuleEntry> modList = modules.get(categories.get(selectedCategory));
-            if (modList != null) {
-                int itemH = 36;
-                int visible = listH / itemH;
-                int maxScroll = Math.max(0, modList.size() - visible);
-                scrollOffset = Math.max(0, Math.min(scrollOffset, maxScroll));
-
-                for (int i = 0; i < visible && scrollOffset + i < modList.size(); i++) {
-                    ModuleEntry entry = modList.get(scrollOffset + i);
-                    int y = listY + i * itemH;
-                    boolean hover = mouseX >= listX && mouseX <= listX + listW && mouseY >= y && mouseY <= y + itemH;
-                    if (hover) {
-                        ctx.fill(listX, y, listX + listW, y + itemH, 0x33FFFFFF);
+                // Категории
+                int catStartX = winX + 30;
+                int catW = 80;
+                int spacing = (WIN_W - 60 - categories.size() * catW) / (categories.size() - 1);
+                if (spacing < 20) spacing = 20;
+                int catY = winY + 50;
+                g.setFont(categoryFont);
+                for (int i = 0; i < categories.size(); i++) {
+                    int x = catStartX + i * (catW + spacing);
+                    boolean hover = mouseX >= x && mouseX <= x + catW && mouseY >= catY && mouseY <= catY + 20;
+                    Color color = (selectedCategory == i) ? Color.WHITE : (hover ? Color.LIGHT_GRAY : Color.GRAY);
+                    g.setColor(color);
+                    drawCenteredString(g, categories.get(i), x + catW / 2, catY + 5);
+                    if (selectedCategory == i) {
+                        int textWidth = getStringWidth(g, categories.get(i));
+                        g.setColor(new Color(0x69B4FF));
+                        g.fillRect(x + (catW - textWidth) / 2, catY + 20, textWidth, 2);
                     }
-                    ctx.drawText(textRenderer, entry.name, listX + 6, y + 6, 0xFFFFFF, false);
-                    ctx.drawText(textRenderer, entry.description, listX + 6, y + 22, 0xAAAAAA, false);
                 }
+
+                // Список модулей
+                int listX = winX + 15;
+                int listY = winY + 85;
+                int listW = WIN_W - 30;
+                int listH = WIN_H - 105;
+                // Clip для прокрутки
+                g.setClip(listX, listY, listW, listH);
+
+                List<ModuleEntry> modList = modules.get(categories.get(selectedCategory));
+                if (modList != null) {
+                    int itemH = 46;
+                    int visible = listH / itemH;
+                    int maxScroll = Math.max(0, modList.size() - visible);
+                    scrollOffset = Math.max(0, Math.min(scrollOffset, maxScroll));
+
+                    for (int i = 0; i < visible && scrollOffset + i < modList.size(); i++) {
+                        ModuleEntry entry = modList.get(scrollOffset + i);
+                        int y = listY + i * itemH;
+                        boolean hover = mouseX >= listX && mouseX <= listX + listW && mouseY >= y && mouseY <= y + itemH;
+                        if (hover) {
+                            g.setColor(new Color(0x33FFFFFF, true));
+                            g.fillRect(listX, y, listW, itemH);
+                        }
+                        g.setFont(moduleNameFont);
+                        g.setColor(Color.WHITE);
+                        drawString(g, entry.name, listX + 10, y + 14);
+                        g.setFont(descFont);
+                        g.setColor(new Color(0xAAAAAA));
+                        drawString(g, entry.description, listX + 10, y + 32);
+                    }
+                }
+                g.setClip(null);
             }
-            ctx.disableScissor();
 
-            // Нижняя строка
-            ctx.drawCenteredTextWithShadow(textRenderer, Text.literal("Linxes Client"), winX + WIN_W / 2, winY + WIN_H - 12, 0xAAAAAA);
+            // super.render не вызываем
+        }
 
-            // super.render не вызываем, чтобы не добавлять лишнего
+        private void drawString(Graphics2D g, String s, int x, int y) {
+            g.drawString(s, x, y);
+        }
+
+        private void drawCenteredString(Graphics2D g, String s, int x, int y) {
+            FontMetrics fm = g.getFontMetrics();
+            int w = fm.stringWidth(s);
+            g.drawString(s, x - w / 2, y + fm.getAscent() - 1);
+        }
+
+        private int getStringWidth(Graphics2D g, String s) {
+            return g.getFontMetrics().stringWidth(s);
         }
 
         private void drawRoundedWindow(DrawContext ctx, int x, int y, int w, int h, int r, int color) {
@@ -153,12 +204,14 @@ public class SpeedMod implements ModInitializer {
         @Override
         public boolean mouseClicked(double mx, double my, int button) {
             if (button == 0) {
-                int catX = winX + 10;
-                int catY = winY + 32;
-                int catW = 56;
-                int catH = 16;
+                int catStartX = winX + 30;
+                int catW = 80;
+                int spacing = (WIN_W - 60 - categories.size() * catW) / (categories.size() - 1);
+                if (spacing < 20) spacing = 20;
+                int catY = winY + 50;
+                int catH = 20;
                 for (int i = 0; i < categories.size(); i++) {
-                    int x = catX + i * (catW + 4);
+                    int x = catStartX + i * (catW + spacing);
                     if (mx >= x && mx <= x + catW && my >= catY && my <= catY + catH) {
                         selectedCategory = i;
                         scrollOffset = 0;
@@ -174,7 +227,7 @@ public class SpeedMod implements ModInitializer {
             int delta = (int) Math.signum(vert);
             List<ModuleEntry> modList = modules.get(categories.get(selectedCategory));
             if (modList != null) {
-                int visible = (WIN_H - 75) / 36;
+                int visible = (WIN_H - 105) / 46;
                 int maxScroll = Math.max(0, modList.size() - visible);
                 scrollOffset = Math.max(0, Math.min(scrollOffset - delta, maxScroll));
             }
