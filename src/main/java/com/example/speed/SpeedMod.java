@@ -34,18 +34,18 @@ public class SpeedMod implements ModInitializer {
     private void tick() {
         if (mc.player == null || mc.getNetworkHandler() == null) return;
 
-        // Принудительный прыжок (каждый тик)
+        // Принудительный прыжок
         mc.player.jump();
 
-        // Отправка пакетов: обычный пакет движения (StatusOnly не существует)
+        // Отправка пакетов каждые 2 тика
         if (mc.player.age % 2 == 0) {
-            // В 1.21.4 пакет движения с флагом onGround
-            mc.getNetworkHandler().sendPacket(new PlayerMoveC2SPacket(mc.player.isOnGround()));
+            // Пакет LookAndOnGround (аналог StatusOnly)
+            mc.getNetworkHandler().sendPacket(new PlayerMoveC2SPacket.LookAndOnGround(mc.player.getYaw(), mc.player.getPitch(), mc.player.isOnGround(), false));
             // Пакет активации элитры
             mc.getNetworkHandler().sendPacket(new ClientCommandC2SPacket(mc.player, ClientCommandC2SPacket.Mode.START_FALL_FLYING));
         }
 
-        // Расчёт скорости (как в оригинале)
+        // Расчёт скорости
         float grim = 0.03f;
         grim *= mc.player.isOnGround() ? 2.8500699f : 1.0200699f;
 
