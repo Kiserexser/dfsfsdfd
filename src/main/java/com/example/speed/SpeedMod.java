@@ -31,6 +31,7 @@ public class SpeedMod implements ModInitializer {
         }).start();
     }
 
+    // GUI с прозрачным фоном (не затемняет игру)
     static class LinxesGUI extends Screen {
         private int selectedCategory = 0;
         private int scrollOffset = 0;
@@ -73,8 +74,9 @@ public class SpeedMod implements ModInitializer {
 
         @Override
         public void render(DrawContext ctx, int mouseX, int mouseY, float delta) {
-            // Рисуем только окно с закруглёнными углами (без фона экрана)
-            fillRounded(ctx, winX, winY, WIN_W, WIN_H, 12, 0xEE1E1E1E);
+            // НЕ вызываем renderBackground – фон остаётся прозрачным (видна игра)
+            // Рисуем только наше окно
+            drawRoundedWindow(ctx, winX, winY, WIN_W, WIN_H, 12, 0xEE1E1E1E);
 
             // Заголовок
             ctx.drawCenteredTextWithShadow(textRenderer, Text.literal("Linxes"), winX + WIN_W / 2, winY + 8, 0xFFFFFF);
@@ -95,7 +97,7 @@ public class SpeedMod implements ModInitializer {
                 }
             }
 
-            // Список модулей (с прокруткой)
+            // Список модулей
             int listX = winX + 10;
             int listY = winY + 55;
             int listW = WIN_W - 20;
@@ -125,19 +127,21 @@ public class SpeedMod implements ModInitializer {
             // Нижняя строка
             ctx.drawCenteredTextWithShadow(textRenderer, Text.literal("Linxes Client"), winX + WIN_W / 2, winY + WIN_H - 12, 0xAAAAAA);
 
+            // super.render не рисует фон, так как мы не вызывали renderBackground
+            // Но вызовем для обработки детей (если они есть)
             super.render(ctx, mouseX, mouseY, delta);
         }
 
-        private void fillRounded(DrawContext ctx, int x, int y, int w, int h, int r, int color) {
+        private void drawRoundedWindow(DrawContext ctx, int x, int y, int w, int h, int r, int color) {
             ctx.fill(x + r, y, x + w - r, y + h, color);
             ctx.fill(x, y + r, x + w, y + h - r, color);
-            fillCircle(ctx, x + r, y + r, r, color);
-            fillCircle(ctx, x + w - r, y + r, r, color);
-            fillCircle(ctx, x + r, y + h - r, r, color);
-            fillCircle(ctx, x + w - r, y + h - r, r, color);
+            drawCircle(ctx, x + r, y + r, r, color);
+            drawCircle(ctx, x + w - r, y + r, r, color);
+            drawCircle(ctx, x + r, y + h - r, r, color);
+            drawCircle(ctx, x + w - r, y + h - r, r, color);
         }
 
-        private void fillCircle(DrawContext ctx, int cx, int cy, int r, int color) {
+        private void drawCircle(DrawContext ctx, int cx, int cy, int r, int color) {
             for (int i = -r; i <= r; i++) {
                 for (int j = -r; j <= r; j++) {
                     if (i*i + j*j <= r*r) {
