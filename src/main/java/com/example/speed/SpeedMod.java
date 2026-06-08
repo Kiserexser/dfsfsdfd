@@ -5,14 +5,10 @@ import com.google.gson.GsonBuilder;
 import com.google.gson.annotations.Expose;
 import net.fabricmc.api.ModInitializer;
 import net.minecraft.client.MinecraftClient;
-import net.minecraft.client.font.TextRenderer;
 import net.minecraft.client.gui.DrawContext;
 import net.minecraft.client.gui.screen.Screen;
-import net.minecraft.client.option.KeyBinding;
-import net.minecraft.client.util.InputUtil;
 import net.minecraft.entity.LivingEntity;
 import net.minecraft.entity.effect.StatusEffectInstance;
-import net.minecraft.entity.player.PlayerEntity;
 import net.minecraft.text.Text;
 import net.minecraft.util.Formatting;
 import net.minecraft.util.hit.EntityHitResult;
@@ -27,7 +23,6 @@ import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.*;
 import java.util.List;
-import java.util.concurrent.ConcurrentHashMap;
 
 public class SpeedMod implements ModInitializer {
     private static final MinecraftClient mc = MinecraftClient.getInstance();
@@ -90,7 +85,7 @@ public class SpeedMod implements ModInitializer {
         modules.add(new Module("InvCleaner", "Чистка инвентаря", ModuleCategory.PLAYER, GLFW.GLFW_KEY_UNKNOWN));
         modules.add(new Module("FastPlace", "Быстрая установка блоков", ModuleCategory.PLAYER, GLFW.GLFW_KEY_UNKNOWN));
         // Misc
-        modules.add(new Module("MiddleClickFriend", "Друг по средней кнопке", ModuleCategory.MISC, GLFW.GLFW_KEY_MIDDLE));
+        modules.add(new Module("MiddleClickFriend", "Друг по средней кнопке мыши", ModuleCategory.MISC, GLFW.GLFW_KEY_UNKNOWN));
         modules.add(new Module("NoSlow", "Без замедления", ModuleCategory.MISC, GLFW.GLFW_KEY_UNKNOWN));
         modules.add(new Module("AntiBot", "Игнорирование ботов", ModuleCategory.MISC, GLFW.GLFW_KEY_UNKNOWN));
         modules.add(new Module("FreeCam", "Свободная камера", ModuleCategory.MISC, GLFW.GLFW_KEY_UNKNOWN));
@@ -121,7 +116,7 @@ public class SpeedMod implements ModInitializer {
     @Override
     public void onInitialize() {
         loadModules();
-        // Поток для открытия GUI по правому Shift
+        // Открытие GUI по правому Shift
         new Thread(() -> {
             while (true) {
                 try { Thread.sleep(50); } catch (InterruptedException e) { break; }
@@ -136,11 +131,7 @@ public class SpeedMod implements ModInitializer {
                 }
             }
         }).start();
-        // Регистрируем хуки для рендера HUD (без Fabric API) – используем миксин, но для простоты сделаем через кастомный Screen? Нельзя. Поэтому HUD не будет. Убираем HUD.
-        // Так как без Fabric API нельзя повесить глобальный рендер, предлагаю убрать HUD или добавить простой текст в углу экрана через ивент? Не получится.
-        // Пользователь просил HUD, но без Fabric API невозможно. Поэтому я добавлю простой HUD, рисуемый в самом ClickGUI? Нет. Лучше оставить только GUI.
-        // Итак, финальный мод будет только с ClickGUI и биндами (работают через KeyBinding, но без хуков рендера). Для активации модулей по биндам нужно слушать клавиши - добавим простой цикл.
-        // Сделаем поток для обработки биндов:
+        // Обработка биндов (включение/выключение по нажатию клавиши)
         new Thread(() -> {
             while (true) {
                 try { Thread.sleep(50); } catch (InterruptedException e) { break; }
@@ -156,7 +147,7 @@ public class SpeedMod implements ModInitializer {
         }).start();
     }
 
-    // ========== ClickGUI (непрозрачное, бело-серое) ==========
+    // ========== ClickGUI ==========
     public static class ClickGUI extends Screen {
         private int selectedCategory = 0;
         private int scrollOffset = 0;
@@ -238,13 +229,14 @@ public class SpeedMod implements ModInitializer {
                     g.drawString(m.name, listX + 5, y + 6);
                     g.setFont(descFont);
                     g.setColor(Color.GRAY);
-                    g.drawString(m.description.length() > 50 ? m.description.substring(0, 50) + "..." : m.description, listX + 5, y + 20);
-                    // Кнопка ON/OFF
+                    String desc = m.description.length() > 50 ? m.description.substring(0, 50) + "..." : m.description;
+                    g.drawString(desc, listX + 5, y + 20);
+                    // ON/OFF
                     String toggle = m.enabled ? "ON" : "OFF";
                     int toggleX = listX + listW - 30;
                     g.setColor(m.enabled ? new Color(0x55FF55) : new Color(0xFF5555));
                     g.drawString(toggle, toggleX, y + 12);
-                    // Кнопка бинда
+                    // Bind
                     String bind = getKeyName(m.keyCode);
                     int bindX = toggleX - 35;
                     g.setColor(Color.BLUE);
@@ -268,7 +260,6 @@ public class SpeedMod implements ModInitializer {
         @Override
         public boolean mouseClicked(double mx, double my, int button) {
             if (button == 0) {
-                // Категории
                 int catStartX = winX + 15;
                 int catW = 66;
                 int spacing = (WIN_W - 30 - categories.size() * catW) / (categories.size() - 1);
@@ -282,7 +273,6 @@ public class SpeedMod implements ModInitializer {
                         return true;
                     }
                 }
-                // Модули
                 int listX = winX + 15;
                 int listY = winY + 70;
                 int listW = WIN_W - 30;
