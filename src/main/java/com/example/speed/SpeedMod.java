@@ -5,7 +5,6 @@ import net.minecraft.client.MinecraftClient;
 import net.minecraft.entity.Entity;
 import net.minecraft.entity.LivingEntity;
 import net.minecraft.entity.player.PlayerEntity;
-import net.minecraft.network.packet.c2s.play.PlayerMoveC2SPacket;
 import net.minecraft.util.math.Box;
 import net.minecraft.util.math.Vec3d;
 import org.lwjgl.glfw.GLFW;
@@ -22,17 +21,22 @@ public class SpeedMod implements ModInitializer {
     private static boolean lastRState = false;
     private static Entity target = null;
     private static long lastAttackTime = 0;
-    private static long lastLookPacketTime = 0;
     private static final Random random = new Random();
 
-    private static final float RANGE = 4.0f;
+    // Плавная ротация
+    private static float currentYaw = 0;
+    private static float currentPitch = 0;
+    private static boolean initialized = false;
+    private static final float ROTATION_SPEED = 0.12f; // 12% от разницы за тик – плавно, без рывков
+
+    private static final float RANGE = 4.2f;
     private static final long MIN_ATTACK_DELAY = 820;
     private static final long MAX_ATTACK_DELAY = 930;
-    private static final long LOOK_PACKET_INTERVAL = 150; // 150 мс – плавно для других, незаметно для античита
+    private static final float REQUIRED_ANGLE = 12.0f; // градусов до цели, чтобы начать атаку
 
     @Override
     public void onInitialize() {
-        LOGGER.info("[RW] No camera jerk + others see aim. Press R.");
+        LOGGER.info("[RW] Smooth Rotation Killaura (camera turns gently). Press R.");
         Thread tickThread = new Thread(() -> {
             while (true) {
                 try {
@@ -43,7 +47,7 @@ public class SpeedMod implements ModInitializer {
                     boolean currentR = GLFW.glfwGetKey(window, GLFW.GLFW_KEY_R) == GLFW.GLFW_PRESS;
                     if (currentR && !lastRState) {
                         enabled = !enabled;
-                        LOGGER.info(enabled ? "Killaura ON (no jerk)" : "Killaura OFF");
+                        LOGGER.info(enabled ? "Killaura ON (smooth rotation)" : "Killaura OFF");
                         if (!enabled) target = null;
                         Thread.sleep(150);
                     }
@@ -58,19 +62,49 @@ public class SpeedMod implements ModInitializer {
 
     private static void tick(MinecraftClient client) {
         updateTarget(client);
-        if (target == null) return;
-
-        long now = System.currentTimeMillis();
-
-        // Отправляем пакеты поворота на сервер, чтобы другие видели наведение
-        if (now - lastLookPacketTime >= LOOK_PACKET_INTERVAL) {
-            sendLookAtTarget(client, target);
-            lastLookPacketTime = now;
+        if (target == null) {
+            initialized = false;
+            return;
         }
 
+        // Инициализация текущих углов
+        if (!initialized) {
+            currentYaw = client.player.getYaw();
+            currentPitch = client.player.getPitch();
+            initialized = true;
+        }
+
+        // Вычисляем идеальный угол на цель
+        Vec3d eyePos = client.player.getEyePos();
+        Vec3d targetVec = target.getBoundingBox().getCenter().subtract(eyePos);
+        double hyp = Math.hypot(targetVec.x, targetVec.z);
+        float idealYaw = (float) (Math.toDegrees(Math.atan2(targetVec.z, targetVec.x)) - 90);
+        float idealPitch = (float) -Math.toDegrees(Math.atan2(targetVec.y, hyp));
+        idealYaw = wrapDegrees(idealYaw);
+        idealPitch = clamp(idealPitch, -89, 89);
+
+        // Плавное изменение углов (ротация)
+        float deltaYaw = wrapDegrees(idealYaw - currentYaw);
+        float deltaPitch = idealPitch - currentPitch;
+        currentYaw += deltaYaw * ROTATION_SPEED;
+        currentPitch += deltaPitch * ROTATION_SPEED;
+        currentYaw = wrapDegrees(currentYaw);
+        currentPitch = clamp(currentPitch, -89, 89);
+
+        // Применяем поворот к камере (плавно, без рывков)
+        client.player.setYaw(currentYaw);
+        client.player.setPitch(currentPitch);
+        client.player.bodyYaw = currentYaw;
+        client.player.headYaw = currentYaw;
+
+        // Проверяем, смотрим ли мы достаточно близко к цели
+        float angleToTarget = getAngleToTarget(client, target);
+        if (angleToTarget > REQUIRED_ANGLE) return; // не атакуем, если смотрим мимо
+
         // Атака с задержкой
-        long attackDelay = MIN_ATTACK_DELAY + (long)(random.nextDouble() * (MAX_ATTACK_DELAY - MIN_ATTACK_DELAY));
-        if (now - lastAttackTime >= attackDelay) {
+        long now = System.currentTimeMillis();
+        long delay = MIN_ATTACK_DELAY + (long)(random.nextDouble() * (MAX_ATTACK_DELAY - MIN_ATTACK_DELAY));
+        if (now - lastAttackTime >= delay) {
             boolean wasSprinting = client.player.isSprinting();
             client.interactionManager.attackEntity(client.player, target);
             if (wasSprinting) client.player.setSprinting(true);
@@ -99,17 +133,13 @@ public class SpeedMod implements ModInitializer {
         target = best;
     }
 
-    private static void sendLookAtTarget(MinecraftClient client, Entity target) {
-        if (client.getNetworkHandler() == null) return;
+    private static float getAngleToTarget(MinecraftClient client, Entity target) {
         Vec3d eyePos = client.player.getEyePos();
-        Vec3d targetVec = target.getBoundingBox().getCenter().subtract(eyePos);
-        double hyp = Math.hypot(targetVec.x, targetVec.z);
-        float yaw = (float) (Math.toDegrees(Math.atan2(targetVec.z, targetVec.x)) - 90);
-        float pitch = (float) -Math.toDegrees(Math.atan2(targetVec.y, hyp));
-        yaw = wrapDegrees(yaw);
-        pitch = clamp(pitch, -89, 89);
-        PlayerMoveC2SPacket.LookAndOnGround packet = new PlayerMoveC2SPacket.LookAndOnGround(yaw, pitch, client.player.isOnGround(), false);
-        client.getNetworkHandler().sendPacket(packet);
+        Vec3d lookVec = client.player.getRotationVector();
+        Vec3d toTarget = target.getBoundingBox().getCenter().subtract(eyePos).normalize();
+        double dot = lookVec.dotProduct(toTarget);
+        double angleRad = Math.acos(Math.min(1.0, Math.max(-1.0, dot)));
+        return (float) Math.toDegrees(angleRad);
     }
 
     private static float wrapDegrees(float value) {
