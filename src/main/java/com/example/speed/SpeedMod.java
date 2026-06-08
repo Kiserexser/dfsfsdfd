@@ -10,6 +10,7 @@ public class SpeedMod implements ModInitializer {
     private static final MinecraftClient mc = MinecraftClient.getInstance();
     private static boolean enabled = false;
     private static boolean lastRState = false;
+    private static final double SPEED_BOOST = 1.6; // в два раза больше (было 0.8)
 
     @Override
     public void onInitialize() {
@@ -21,13 +22,13 @@ public class SpeedMod implements ModInitializer {
                 boolean currentR = GLFW.glfwGetKey(window, GLFW.GLFW_KEY_R) == GLFW.GLFW_PRESS;
                 if (currentR && !lastRState) {
                     enabled = !enabled;
-                    String msg = enabled ? "§aWebFly ON (FAST)" : "§cWebFly OFF";
+                    String msg = enabled ? "§aWebSpeed ON (2x)" : "§cWebSpeed OFF";
                     if (mc.player != null) mc.player.sendMessage(Text.literal(msg), true);
                     try { Thread.sleep(200); } catch (InterruptedException ignored) {}
                 }
                 lastRState = currentR;
                 if (enabled) {
-                    handleWebFly();
+                    handleSpeed();
                 }
             }
         }).start();
@@ -40,20 +41,25 @@ public class SpeedMod implements ModInitializer {
                mc.world.getBlockState(blockPos.down()).getBlock() == Blocks.COBWEB;
     }
 
-    private void handleWebFly() {
+    private void handleSpeed() {
         if (mc.player == null) return;
 
         if (isInWeb()) {
-            // Ускоренный подъём – каждый тик импульс 0.85 (в 2 раза быстрее)
-            mc.player.addVelocity(0, 0.85, 0);
+            float forward = mc.player.input.movementForward;
+            float strafe = mc.player.input.movementSideways;
+            if (forward != 0 || strafe != 0) {
+                float yaw = mc.player.getYaw();
+                double rad = Math.toRadians(yaw);
+                double vx = -Math.sin(rad) * forward * SPEED_BOOST;
+                double vz = Math.cos(rad) * forward * SPEED_BOOST;
+                if (strafe != 0) {
+                    double strafeRad = Math.toRadians(yaw + (strafe > 0 ? -90 : 90));
+                    vx += -Math.sin(strafeRad) * strafe * SPEED_BOOST;
+                    vz += Math.cos(strafeRad) * strafe * SPEED_BOOST;
+                }
+                mc.player.addVelocity(vx, 0, vz);
+            }
             mc.player.setSprinting(true);
-            if (mc.options.jumpKey.isPressed()) {
-                mc.player.jump();
-            }
-        } else {
-            if (!mc.player.isOnGround() && mc.player.getVelocity().y < -0.1) {
-                mc.player.addVelocity(0, 0.04, 0);
-            }
         }
     }
 }
