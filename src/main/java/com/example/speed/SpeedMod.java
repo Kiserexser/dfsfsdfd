@@ -7,12 +7,7 @@ import net.fabricmc.api.ModInitializer;
 import net.minecraft.client.MinecraftClient;
 import net.minecraft.client.gui.DrawContext;
 import net.minecraft.client.gui.screen.Screen;
-import net.minecraft.entity.LivingEntity;
-import net.minecraft.entity.effect.StatusEffectInstance;
 import net.minecraft.text.Text;
-import net.minecraft.util.Formatting;
-import net.minecraft.util.hit.EntityHitResult;
-import net.minecraft.util.hit.HitResult;
 import org.lwjgl.glfw.GLFW;
 
 import java.awt.*;
@@ -29,7 +24,7 @@ public class SpeedMod implements ModInitializer {
     private static boolean lastRShift = false;
     private static final Path MODULE_CONFIG = Paths.get("config/linxes_modules.json");
 
-    // ========== Модули (45 штук) ==========
+    // ========== 45 модулей ==========
     public enum ModuleCategory { COMBAT, MOVEMENT, VISUALS, PLAYER, MISC }
     public static class Module {
         public String name;
@@ -44,7 +39,7 @@ public class SpeedMod implements ModInitializer {
     }
     public static final List<Module> modules = new ArrayList<>();
     static {
-        // Combat
+        // Combat (1-9)
         modules.add(new Module("KillAura", "Автоматически атакует ближайшего врага", ModuleCategory.COMBAT, GLFW.GLFW_KEY_R));
         modules.add(new Module("Aimbot", "Наводит прицел на цель", ModuleCategory.COMBAT, GLFW.GLFW_KEY_UNKNOWN));
         modules.add(new Module("TriggerBot", "Стреляет при наведении", ModuleCategory.COMBAT, GLFW.GLFW_KEY_UNKNOWN));
@@ -54,7 +49,7 @@ public class SpeedMod implements ModInitializer {
         modules.add(new Module("Criticals", "Автоматические криты", ModuleCategory.COMBAT, GLFW.GLFW_KEY_UNKNOWN));
         modules.add(new Module("AutoClicker", "Автоматические клики", ModuleCategory.COMBAT, GLFW.GLFW_KEY_UNKNOWN));
         modules.add(new Module("WTap", "WTap для комбо", ModuleCategory.COMBAT, GLFW.GLFW_KEY_UNKNOWN));
-        // Movement
+        // Movement (10-18)
         modules.add(new Module("Speed", "Увеличивает скорость", ModuleCategory.MOVEMENT, GLFW.GLFW_KEY_UNKNOWN));
         modules.add(new Module("Fly", "Позволяет летать", ModuleCategory.MOVEMENT, GLFW.GLFW_KEY_UNKNOWN));
         modules.add(new Module("Flight", "Режим полёта", ModuleCategory.MOVEMENT, GLFW.GLFW_KEY_UNKNOWN));
@@ -64,7 +59,7 @@ public class SpeedMod implements ModInitializer {
         modules.add(new Module("LongJump", "Увеличенный прыжок", ModuleCategory.MOVEMENT, GLFW.GLFW_KEY_UNKNOWN));
         modules.add(new Module("Scaffold", "Ставит блоки под ноги", ModuleCategory.MOVEMENT, GLFW.GLFW_KEY_UNKNOWN));
         modules.add(new Module("HighJump", "Высокий прыжок", ModuleCategory.MOVEMENT, GLFW.GLFW_KEY_UNKNOWN));
-        // Visuals
+        // Visuals (19-27)
         modules.add(new Module("ESP", "Подсветка игроков", ModuleCategory.VISUALS, GLFW.GLFW_KEY_UNKNOWN));
         modules.add(new Module("Chams", "Цветные модели", ModuleCategory.VISUALS, GLFW.GLFW_KEY_UNKNOWN));
         modules.add(new Module("Nametags", "Улучшенные таблички", ModuleCategory.VISUALS, GLFW.GLFW_KEY_UNKNOWN));
@@ -74,7 +69,7 @@ public class SpeedMod implements ModInitializer {
         modules.add(new Module("ItemPhysics", "Физика предметов", ModuleCategory.VISUALS, GLFW.GLFW_KEY_UNKNOWN));
         modules.add(new Module("Crosshair", "Кастомный прицел", ModuleCategory.VISUALS, GLFW.GLFW_KEY_UNKNOWN));
         modules.add(new Module("ViewClip", "Просмотр сквозь стены", ModuleCategory.VISUALS, GLFW.GLFW_KEY_UNKNOWN));
-        // Player
+        // Player (28-36)
         modules.add(new Module("AutoArmor", "Автоматическая броня", ModuleCategory.PLAYER, GLFW.GLFW_KEY_UNKNOWN));
         modules.add(new Module("AutoGap", "Авто-золотые яблоки", ModuleCategory.PLAYER, GLFW.GLFW_KEY_UNKNOWN));
         modules.add(new Module("AutoPotion", "Авто-зелья", ModuleCategory.PLAYER, GLFW.GLFW_KEY_UNKNOWN));
@@ -84,7 +79,7 @@ public class SpeedMod implements ModInitializer {
         modules.add(new Module("AutoRespawn", "Мгновенное возрождение", ModuleCategory.PLAYER, GLFW.GLFW_KEY_UNKNOWN));
         modules.add(new Module("InvCleaner", "Чистка инвентаря", ModuleCategory.PLAYER, GLFW.GLFW_KEY_UNKNOWN));
         modules.add(new Module("FastPlace", "Быстрая установка блоков", ModuleCategory.PLAYER, GLFW.GLFW_KEY_UNKNOWN));
-        // Misc
+        // Misc (37-45)
         modules.add(new Module("MiddleClickFriend", "Друг по средней кнопке мыши", ModuleCategory.MISC, GLFW.GLFW_KEY_UNKNOWN));
         modules.add(new Module("NoSlow", "Без замедления", ModuleCategory.MISC, GLFW.GLFW_KEY_UNKNOWN));
         modules.add(new Module("AntiBot", "Игнорирование ботов", ModuleCategory.MISC, GLFW.GLFW_KEY_UNKNOWN));
@@ -96,7 +91,7 @@ public class SpeedMod implements ModInitializer {
         modules.add(new Module("DiscordRPC", "Дискорд присутствие", ModuleCategory.MISC, GLFW.GLFW_KEY_UNKNOWN));
     }
 
-    // Конфиг модулей
+    // ========== Сохранение / загрузка ==========
     private static class ModuleConfig { @Expose Map<String, Boolean> enabled = new HashMap<>(); @Expose Map<String, Integer> keyBind = new HashMap<>(); }
     private static final Gson GSON = new GsonBuilder().excludeFieldsWithoutExposeAnnotation().setPrettyPrinting().create();
     private static void saveModules() {
@@ -131,7 +126,7 @@ public class SpeedMod implements ModInitializer {
                 }
             }
         }).start();
-        // Обработка биндов (включение/выключение по нажатию клавиши)
+        // Обработка биндов (включение/выключение по клавишам)
         new Thread(() -> {
             while (true) {
                 try { Thread.sleep(50); } catch (InterruptedException e) { break; }
@@ -147,12 +142,12 @@ public class SpeedMod implements ModInitializer {
         }).start();
     }
 
-    // ========== ClickGUI ==========
+    // ========== ТЁМНОЕ КЛИК-МЕНЮ ==========
     public static class ClickGUI extends Screen {
         private int selectedCategory = 0;
         private int scrollOffset = 0;
-        private static final int WIN_W = 380;
-        private static final int WIN_H = 340;
+        private static final int WIN_W = 400;
+        private static final int WIN_H = 360;
         private int winX, winY;
         private Module selectedModule = null;
         private boolean binding = false;
@@ -165,10 +160,10 @@ public class SpeedMod implements ModInitializer {
             for (ModuleCategory cat : categories) modulesByCategory.put(cat, new ArrayList<>());
             for (Module m : modules) modulesByCategory.get(m.category).add(m);
             try {
-                titleFont = new Font("Segoe UI", Font.BOLD, 20);
-                catFont = new Font("Segoe UI", Font.BOLD, 14);
-                modFont = new Font("Segoe UI", Font.PLAIN, 12);
-                descFont = new Font("Segoe UI", Font.PLAIN, 10);
+                titleFont = new Font("Segoe UI", Font.BOLD, 22);
+                catFont = new Font("Segoe UI", Font.BOLD, 16);
+                modFont = new Font("Segoe UI", Font.PLAIN, 13);
+                descFont = new Font("Segoe UI", Font.PLAIN, 11);
             } catch (Exception e) { titleFont = modFont = descFont = catFont = new Font("Dialog", Font.PLAIN, 12); }
         }
 
@@ -181,38 +176,43 @@ public class SpeedMod implements ModInitializer {
 
         @Override
         public void render(DrawContext ctx, int mouseX, int mouseY, float delta) {
-            drawRoundedRect(ctx, winX, winY, WIN_W, WIN_H, 10, 0xFFF0F0F0);
+            // Тёмный фон окна
+            drawRoundedRect(ctx, winX, winY, WIN_W, WIN_H, 12, 0xDD222222);
             Graphics2D g = getGraphics2D(ctx);
             if (g == null) return;
             g.setRenderingHint(RenderingHints.KEY_TEXT_ANTIALIASING, RenderingHints.VALUE_TEXT_ANTIALIAS_ON);
+            // Заголовок (белый)
             g.setFont(titleFont);
-            g.setColor(Color.DARK_GRAY);
-            drawCenteredString(g, "Lunxes DLC", winX + WIN_W/2, winY + 22);
-            // Категории
-            int catStartX = winX + 15;
-            int catW = 66;
-            int spacing = (WIN_W - 30 - categories.size() * catW) / (categories.size() - 1);
-            if (spacing < 10) spacing = 10;
-            int catY = winY + 40;
+            g.setColor(Color.WHITE);
+            drawCenteredString(g, "Lunxes DLC", winX + WIN_W/2, winY + 28);
+            // Категории (тёмные кнопки, текст белый)
+            int catStartX = winX + 20;
+            int catW = 68;
+            int spacing = (WIN_W - 40 - categories.size() * catW) / (categories.size() - 1);
+            if (spacing < 8) spacing = 8;
+            int catY = winY + 48;
             g.setFont(catFont);
             for (int i = 0; i < categories.size(); i++) {
                 int x = catStartX + i * (catW + spacing);
-                boolean hover = mouseX >= x && mouseX <= x + catW && mouseY >= catY && mouseY <= catY + 18;
-                Color color = (selectedCategory == i) ? new Color(0x3070FF) : (hover ? Color.GRAY : Color.LIGHT_GRAY);
-                g.setColor(color);
-                g.fillRect(x, catY, catW, 18);
-                g.setColor(Color.BLACK);
-                drawCenteredString(g, categories.get(i).name(), x + catW/2, catY + 4);
+                boolean hover = mouseX >= x && mouseX <= x + catW && mouseY >= catY && mouseY <= catY + 24;
+                Color bgColor;
+                if (selectedCategory == i) bgColor = new Color(0x3A6EA5);
+                else if (hover) bgColor = new Color(0x444444);
+                else bgColor = new Color(0x333333);
+                g.setColor(bgColor);
+                g.fillRoundRect(x, catY, catW, 24, 6, 6);
+                g.setColor(Color.WHITE);
+                drawCenteredString(g, categories.get(i).name(), x + catW/2, catY + 7);
             }
             // Список модулей
             int listX = winX + 15;
-            int listY = winY + 70;
+            int listY = winY + 90;
             int listW = WIN_W - 30;
-            int listH = WIN_H - 95;
+            int listH = WIN_H - 115;
             g.setClip(listX, listY, listW, listH);
             List<Module> mods = modulesByCategory.get(categories.get(selectedCategory));
             if (mods != null) {
-                int itemH = 32;
+                int itemH = 38;
                 int visible = listH / itemH;
                 int maxScroll = Math.max(0, mods.size() - visible);
                 scrollOffset = Math.max(0, Math.min(scrollOffset, maxScroll));
@@ -221,33 +221,36 @@ public class SpeedMod implements ModInitializer {
                     int y = listY + i * itemH;
                     boolean hover = mouseX >= listX && mouseX <= listX + listW && mouseY >= y && mouseY <= y + itemH;
                     if (hover) {
-                        g.setColor(new Color(0xDDDDDD, true));
+                        g.setColor(new Color(0x44AAAAAA, true));
                         g.fillRect(listX, y, listW, itemH);
                     }
+                    // Название модуля (белое)
                     g.setFont(modFont);
-                    g.setColor(Color.BLACK);
-                    g.drawString(m.name, listX + 5, y + 6);
+                    g.setColor(Color.WHITE);
+                    g.drawString(m.name, listX + 8, y + 13);
+                    // Описание (светло-серое)
                     g.setFont(descFont);
-                    g.setColor(Color.GRAY);
-                    String desc = m.description.length() > 50 ? m.description.substring(0, 50) + "..." : m.description;
-                    g.drawString(desc, listX + 5, y + 20);
-                    // ON/OFF
+                    g.setColor(new Color(0xCCCCCC));
+                    String desc = m.description.length() > 48 ? m.description.substring(0, 48) + "..." : m.description;
+                    g.drawString(desc, listX + 8, y + 28);
+                    // ON/OFF (зелёный/красный)
                     String toggle = m.enabled ? "ON" : "OFF";
-                    int toggleX = listX + listW - 30;
+                    int toggleX = listX + listW - 40;
+                    g.setFont(modFont);
                     g.setColor(m.enabled ? new Color(0x55FF55) : new Color(0xFF5555));
-                    g.drawString(toggle, toggleX, y + 12);
-                    // Bind
+                    g.drawString(toggle, toggleX, y + 17);
+                    // Бинд (синий)
                     String bind = getKeyName(m.keyCode);
-                    int bindX = toggleX - 35;
-                    g.setColor(Color.BLUE);
-                    g.drawString("[" + bind + "]", bindX, y + 12);
+                    int bindX = toggleX - 55;
+                    g.setColor(new Color(0x69B4FF));
+                    g.drawString("[" + bind + "]", bindX, y + 17);
                 }
             }
             g.setClip(null);
             if (binding && selectedModule != null) {
                 g.setFont(catFont);
-                g.setColor(Color.RED);
-                drawCenteredString(g, "Press any key for " + selectedModule.name + "...", winX + WIN_W/2, winY + WIN_H - 20);
+                g.setColor(new Color(0xFFAA55));
+                drawCenteredString(g, "Press any key for " + selectedModule.name + "...", winX + WIN_W/2, winY + WIN_H - 18);
             }
         }
 
@@ -260,37 +263,37 @@ public class SpeedMod implements ModInitializer {
         @Override
         public boolean mouseClicked(double mx, double my, int button) {
             if (button == 0) {
-                int catStartX = winX + 15;
-                int catW = 66;
-                int spacing = (WIN_W - 30 - categories.size() * catW) / (categories.size() - 1);
-                if (spacing < 10) spacing = 10;
-                int catY = winY + 40;
+                int catStartX = winX + 20;
+                int catW = 68;
+                int spacing = (WIN_W - 40 - categories.size() * catW) / (categories.size() - 1);
+                if (spacing < 8) spacing = 8;
+                int catY = winY + 48;
                 for (int i = 0; i < categories.size(); i++) {
                     int x = catStartX + i * (catW + spacing);
-                    if (mx >= x && mx <= x + catW && my >= catY && my <= catY + 18) {
+                    if (mx >= x && mx <= x + catW && my >= catY && my <= catY + 24) {
                         selectedCategory = i;
                         scrollOffset = 0;
                         return true;
                     }
                 }
                 int listX = winX + 15;
-                int listY = winY + 70;
+                int listY = winY + 90;
                 int listW = WIN_W - 30;
-                int itemH = 32;
+                int itemH = 38;
                 List<Module> mods = modulesByCategory.get(categories.get(selectedCategory));
                 if (mods != null) {
                     for (int i = 0; i < mods.size(); i++) {
                         int y = listY + i * itemH;
                         if (mx >= listX && mx <= listX + listW && my >= y && my <= y + itemH) {
                             Module m = mods.get(i);
-                            int toggleX = listX + listW - 30;
-                            if (mx >= toggleX && mx <= toggleX + 25) {
+                            int toggleX = listX + listW - 40;
+                            if (mx >= toggleX && mx <= toggleX + 30) {
                                 m.enabled = !m.enabled;
                                 saveModules();
                                 return true;
                             }
-                            int bindX = toggleX - 35;
-                            if (mx >= bindX && mx <= bindX + 30) {
+                            int bindX = toggleX - 55;
+                            if (mx >= bindX && mx <= bindX + 45) {
                                 binding = true;
                                 selectedModule = m;
                                 return true;
