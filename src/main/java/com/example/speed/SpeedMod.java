@@ -155,7 +155,11 @@ public class SpeedMod implements ModInitializer {
         newYaw += (random.nextFloat() - 0.5f) * 0.018f;
         newPitch += (random.nextFloat() - 0.5f) * 0.014f;
 
-        float gcd = getGCD(client);
+        // Исправление: double -> float
+        double sens = client.options.getMouseSensitivity().getValue();
+        float gcd = (float) (sens * 0.6 + 0.2);
+        gcd = gcd * gcd * gcd * 8.0f;
+
         float gcdVariation = 0.985f + (random.nextFloat() * 0.03f);
         newYaw -= (newYaw - currentYaw) % (gcd * gcdVariation);
         newPitch -= (newPitch - currentPitch) % (gcd * gcdVariation * 0.95f);
@@ -181,15 +185,13 @@ public class SpeedMod implements ModInitializer {
             client.player.headYaw += (random.nextFloat() - 0.5f) * 0.6f;
         }
 
-        // --- Сброс спринта (No Sprint Reset) ---
+        // No Sprint Reset
         boolean wasSprinting = client.player.isSprinting();
         client.interactionManager.attackEntity(client.player, target);
         if (wasSprinting) {
             client.player.setSprinting(true);
         }
-        // Дополнительно: отправка пакета начала спринта на сервер
         client.player.setSprinting(true);
-        // --- Конец сброса спринта ---
 
         if (time % 2000 < 100) {
             float randomizer = 0.9f + random.nextFloat() * 0.2f;
@@ -209,12 +211,5 @@ public class SpeedMod implements ModInitializer {
         if (value < min) return min;
         if (value > max) return max;
         return value;
-    }
-
-    private static float getGCD(MinecraftClient client) {
-        float sens = client.options.getMouseSensitivity().getValue();
-        float gcd = sens * 0.6f + 0.2f;
-        gcd = gcd * gcd * gcd * 8.0f;
-        return gcd;
     }
 }
