@@ -4,10 +4,12 @@ import net.fabricmc.api.ModInitializer;
 import net.minecraft.client.MinecraftClient;
 import net.minecraft.client.gui.DrawContext;
 import net.minecraft.client.gui.screen.Screen;
+import net.minecraft.client.gui.widget.TextFieldWidget;
 import net.minecraft.text.Text;
 import org.lwjgl.glfw.GLFW;
 
 import java.util.*;
+import java.util.stream.Collectors;
 
 public class SpeedMod implements ModInitializer {
     private static final MinecraftClient mc = MinecraftClient.getInstance();
@@ -22,7 +24,7 @@ public class SpeedMod implements ModInitializer {
                     long window = mc.getWindow().getHandle();
                     boolean rShift = GLFW.glfwGetKey(window, GLFW.GLFW_KEY_RIGHT_SHIFT) == GLFW.GLFW_PRESS;
                     if (rShift && !lastRShift) {
-                        mc.execute(() -> mc.setScreen(new ModernGUI()));
+                        mc.execute(() -> mc.setScreen(new NeokeepGUI()));
                         try { Thread.sleep(200); } catch (InterruptedException ignored) {}
                     }
                     lastRShift = rShift;
@@ -31,124 +33,129 @@ public class SpeedMod implements ModInitializer {
         }).start();
     }
 
-    static class ModernGUI extends Screen {
+    static class NeokeepGUI extends Screen {
         private int selectedCategory = 0;
         private int scrollOffset = 0;
-        private final List<String> categories = Arrays.asList(
-                "KeyBinds", "ClickPearl", "Combat", "Movement", "Player", "Render", "Misc", "Theme"
-        );
-        private final Map<String, List<String>> modules = new LinkedHashMap<>();
-        private final Map<String, Boolean> toggles = new HashMap<>();
-        private int mouseScroll = 0;
+        private TextFieldWidget searchBox;
+        private String filter = "";
 
-        protected ModernGUI() {
-            super(Text.literal("SpeedMod"));
+        private final List<String> categories = Arrays.asList("Combat", "Movement", "Visuals", "Player", "Misc");
+        private final Map<String, List<ModuleEntry>> modules = new LinkedHashMap<>();
+
+        public NeokeepGUI() {
+            super(Text.literal("Neokeep"));
             initModules();
         }
 
         private void initModules() {
-            modules.put("KeyBinds", Arrays.asList("No Unmatched", "StaffList"));
-            modules.put("ClickPearl", Arrays.asList("AntiPush", "Velocity", "NoSlow"));
-            modules.put("Combat", Arrays.asList("AutoArmor", "AutoExplosion", "AutoGap", "AutoPotion", "AutoSwap", "AutoTotem", "HitBox", "KillAura", "NoEntityTrace", "TriggerBot", "Velocity"));
-            modules.put("Movement", Arrays.asList("AutoSprint", "ElytraFly", "Fly", "NoClip", "NoSlow", "Phase", "Speed", "Spider", "Strafe", "TargetStrafe", "Timer", "NoEntityTrace", "NoRotate"));
-            modules.put("Player", Arrays.asList("AntiPush", "AutoLeave", "AutoTool", "ChestStealer", "ClickFriend", "ClickPearl", "FreeCamel", "InventoryMove", "ItemsCooldown", "NoInteract", "NoJumpDelay", "NoRotate"));
-            modules.put("Render", Arrays.asList("ItemPhysic", "AutoCarpet", "JumpCircle", "AutoTool", "NoRender", "Particles", "ClickFriend", "Pointers", "Predictions", "Snow", "StorageESP", "SwingAnimation", "TargetESP", "Tracers", "Trails", "ViewModel", "World"));
-            modules.put("Misc", Arrays.asList("AutoAccept", "AutoBuyUI", "AutoFish", "AutoRespawn", "AutoTransfer", "ClientSounds", "ElytraHelper", "GriefHelper", "HitSound", "ItemScroller", "ItemSwapFix", "LeaveTracker", "NameProtect", "NoEventDelay", "CalfProtect"));
-            modules.put("Theme", Arrays.asList("Slight Ocean View", "Mojito", "Rose Water", "Anamnesis", "Ultra Violet", "Quepal", "Intergalactic"));
+            modules.put("Combat", Arrays.asList(
+                new ModuleEntry("MiddleClickFriend", "Добавляет игрока в френд лист при нажатии на кнопку мыши")
+            ));
+            modules.put("Movement", Arrays.asList(
+                new ModuleEntry("NameProtect", "Позволяет скрывать информацию о себе и других игроках")
+            ));
+            modules.put("Visuals", Arrays.asList(
+                new ModuleEntry("ChatHistory", "Не удаляет историю чата при перезаходе на сервер")
+            ));
+            modules.put("Player", Arrays.asList(
+                new ModuleEntry("KitMessage", "Пишет \"Мне\" если кто-то написал \"Кому жить\"")
+            ));
+            modules.put("Misc", Arrays.asList(
+                new ModuleEntry("FakePlayer", "Не удаляет историю чата при перезаходе на сервер")
+            ));
+        }
 
-            for (List<String> list : modules.values()) {
-                for (String mod : list) {
-                    toggles.put(mod, false);
-                }
-            }
+        @Override
+        protected void init() {
+            super.init();
+            searchBox = new TextFieldWidget(textRenderer, width / 2 - 100, 20, 200, 18, Text.literal("Search..."));
+            searchBox.setMaxLength(50);
+            searchBox.setDrawsBackground(true);
+            searchBox.setPlaceholder(Text.literal("Search..."));
+            addSelectableChild(searchBox);
         }
 
         @Override
         public void render(DrawContext context, int mouseX, int mouseY, float delta) {
+            // Полупрозрачный тёмный фон (имитация блюра)
             context.fill(0, 0, width, height, 0xCC000000);
-            int catWidth = 140;
-            int catHeight = 28;
+
+            // Левый блок (категории)
+            int leftWidth = 130;
             int startX = 20;
-            int startY = 40;
-            context.fill(startX - 5, startY - 5, startX + catWidth + 5, height - 20, 0xAA151515);
+            int startY = 55;
+            // Рамка левого блока
+            context.fill(startX - 3, startY - 3, startX + leftWidth + 3, height - 15, 0xAA151515);
+            context.fill(startX, startY, startX + leftWidth, height - 18, 0xEE1A1A1A);
+
             for (int i = 0; i < categories.size(); i++) {
-                int y = startY + i * catHeight;
-                boolean hover = mouseX >= startX && mouseX <= startX + catWidth && mouseY >= y && mouseY <= y + catHeight;
-                int bgColor = (i == selectedCategory) ? 0xFF3A6EA5 : (hover ? 0xFF2C2C2C : 0xFF1E1E1E);
-                context.fill(startX, y, startX + catWidth, y + catHeight, bgColor);
-                if (i == selectedCategory) {
-                    context.fill(startX, y, startX + 4, y + catHeight, 0xFF69B4FF);
+                int y = startY + i * 28;
+                boolean hover = mouseX >= startX && mouseX <= startX + leftWidth && mouseY >= y && mouseY <= y + 24;
+                int bgColor;
+                if (i == selectedCategory) bgColor = 0xFF3A6EA5;
+                else if (hover) bgColor = 0xFF2C2C2C;
+                else bgColor = 0x00FFFFFF; // прозрачный
+                if (i == selectedCategory || hover) {
+                    context.fill(startX, y, startX + leftWidth, y + 24, bgColor);
                 }
-                String catText = categories.get(i);
-                int textWidth = textRenderer.getWidth(catText);
-                int textX = startX + (catWidth - textWidth) / 2;
-                int textY = y + (catHeight - 8) / 2;
-                context.drawText(textRenderer, catText, textX, textY, 0xFFFFFF, false);
+                if (i == selectedCategory) {
+                    context.fill(startX, y, startX + 4, y + 24, 0xFF69B4FF);
+                }
+                context.drawText(textRenderer, categories.get(i), startX + 10, y + 6, 0xFFFFFF, false);
             }
 
-            int rightX = startX + catWidth + 15;
+            // Правый блок (модули)
+            int rightX = startX + leftWidth + 15;
             int rightWidth = width - rightX - 20;
-            int moduleHeight = 26;
-            context.fill(rightX - 5, startY - 5, rightX + rightWidth + 5, height - 20, 0xAA151515);
-            List<String> modList = modules.get(categories.get(selectedCategory));
+            context.fill(rightX - 3, startY - 3, rightX + rightWidth + 3, height - 15, 0xAA151515);
+            context.fill(rightX, startY, rightX + rightWidth, height - 18, 0xEE1A1A1A);
+
+            // Фильтрация по поиску
+            List<ModuleEntry> modList = modules.get(categories.get(selectedCategory));
             if (modList != null) {
-                int visibleCount = (height - startY - 20) / moduleHeight;
-                int maxScroll = Math.max(0, modList.size() - visibleCount);
+                List<ModuleEntry> filtered = modList.stream()
+                        .filter(m -> m.name.toLowerCase().contains(filter.toLowerCase()))
+                        .collect(Collectors.toList());
+
+                int moduleHeight = 46;
+                int visibleCount = (height - startY - 25) / moduleHeight;
+                int maxScroll = Math.max(0, filtered.size() - visibleCount);
                 scrollOffset = Math.max(0, Math.min(scrollOffset, maxScroll));
-                if (mouseScroll != 0) {
-                    scrollOffset -= mouseScroll;
-                    mouseScroll = 0;
-                    scrollOffset = Math.max(0, Math.min(scrollOffset, maxScroll));
-                }
-                for (int i = 0; i < visibleCount && scrollOffset + i < modList.size(); i++) {
-                    String modName = modList.get(scrollOffset + i);
+
+                for (int i = 0; i < visibleCount && scrollOffset + i < filtered.size(); i++) {
+                    ModuleEntry entry = filtered.get(scrollOffset + i);
                     int y = startY + i * moduleHeight;
                     boolean hover = mouseX >= rightX && mouseX <= rightX + rightWidth && mouseY >= y && mouseY <= y + moduleHeight;
-                    boolean state = toggles.getOrDefault(modName, false);
-                    int bgColor = hover ? 0xFF2D2D2D : 0xFF1A1A1A;
-                    context.fill(rightX, y, rightX + rightWidth, y + moduleHeight, bgColor);
-                    context.drawText(textRenderer, modName, rightX + 8, y + (moduleHeight - 8) / 2, 0xE0E0E0, false);
-                    String toggleText = state ? "ON" : "OFF";
-                    int toggleColor = state ? 0xFF55FF55 : 0xFFFF5555;
-                    int toggleX = rightX + rightWidth - textRenderer.getWidth(toggleText) - 8;
-                    context.drawText(textRenderer, toggleText, toggleX, y + (moduleHeight - 8) / 2, toggleColor, false);
+                    if (hover) {
+                        context.fill(rightX, y, rightX + rightWidth, y + moduleHeight, 0x552C2C2C);
+                    }
+                    // Название модуля (белый)
+                    context.drawText(textRenderer, entry.name, rightX + 10, y + 8, 0xFFFFFF, false);
+                    // Описание (светло-серый)
+                    context.drawText(textRenderer, entry.description, rightX + 10, y + 26, 0xAAAAAA, false);
                 }
             }
 
-            String title = "SpeedMod";
-            int titleWidth = textRenderer.getWidth(title);
-            context.drawText(textRenderer, title, (width - titleWidth) / 2, 12, 0xFFFFFF, true);
+            // Заголовок "Neokeep"
+            context.drawCenteredTextWithShadow(textRenderer, Text.literal("Neokeep"), width / 2, 8, 0xFFFFFF);
+            // Поиск
+            searchBox.render(context, mouseX, mouseY, delta);
             super.render(context, mouseX, mouseY, delta);
         }
 
         @Override
         public boolean mouseClicked(double mouseX, double mouseY, int button) {
-            if (button == GLFW.GLFW_MOUSE_BUTTON_LEFT) {
-                int catWidth = 140;
+            if (button == 0) {
+                // Клик по категориям
+                int leftWidth = 130;
                 int startX = 20;
-                int startY = 40;
-                int catHeight = 28;
+                int startY = 55;
                 for (int i = 0; i < categories.size(); i++) {
-                    int y = startY + i * catHeight;
-                    if (mouseX >= startX && mouseX <= startX + catWidth && mouseY >= y && mouseY <= y + catHeight) {
+                    int y = startY + i * 28;
+                    if (mouseX >= startX && mouseX <= startX + leftWidth && mouseY >= y && mouseY <= y + 24) {
                         selectedCategory = i;
                         scrollOffset = 0;
                         return true;
-                    }
-                }
-                int rightX = startX + catWidth + 15;
-                int rightWidth = width - rightX - 20;
-                int moduleHeight = 26;
-                List<String> modList = modules.get(categories.get(selectedCategory));
-                if (modList != null) {
-                    int visibleCount = (height - startY - 20) / moduleHeight;
-                    for (int i = 0; i < visibleCount && scrollOffset + i < modList.size(); i++) {
-                        int y = startY + i * moduleHeight;
-                        if (mouseX >= rightX && mouseX <= rightX + rightWidth && mouseY >= y && mouseY <= y + moduleHeight) {
-                            String modName = modList.get(scrollOffset + i);
-                            toggles.put(modName, !toggles.getOrDefault(modName, false));
-                            return true;
-                        }
                     }
                 }
             }
@@ -156,23 +163,43 @@ public class SpeedMod implements ModInitializer {
         }
 
         @Override
-        public boolean mouseScrolled(double mouseX, double mouseY, double horizontalAmount, double verticalAmount) {
-            mouseScroll = (int) Math.signum(verticalAmount);
-            return true;
-        }
-
-        @Override
         public boolean keyPressed(int keyCode, int scanCode, int modifiers) {
             if (keyCode == GLFW.GLFW_KEY_ESCAPE || keyCode == GLFW.GLFW_KEY_RIGHT_SHIFT) {
-                this.close();
+                close();
                 return true;
+            }
+            if (searchBox.isFocused()) {
+                boolean handled = searchBox.keyPressed(keyCode, scanCode, modifiers);
+                filter = searchBox.getText();
+                return handled;
             }
             return super.keyPressed(keyCode, scanCode, modifiers);
         }
 
         @Override
+        public boolean mouseScrolled(double mouseX, double mouseY, double horizontalAmount, double verticalAmount) {
+            int delta = (int) Math.signum(verticalAmount);
+            List<ModuleEntry> modList = modules.get(categories.get(selectedCategory));
+            if (modList != null) {
+                int visibleCount = (height - 80) / 46;
+                int maxScroll = Math.max(0, modList.size() - visibleCount);
+                scrollOffset = Math.max(0, Math.min(scrollOffset - delta, maxScroll));
+            }
+            return true;
+        }
+
+        @Override
         public void close() {
-            this.client.setScreen(null);
+            client.setScreen(null);
+        }
+
+        private static class ModuleEntry {
+            String name;
+            String description;
+            ModuleEntry(String name, String desc) {
+                this.name = name;
+                this.description = desc;
+            }
         }
     }
 }
