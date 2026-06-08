@@ -2,11 +2,12 @@ package com.example.speed;
 
 import net.fabricmc.api.ModInitializer;
 import net.minecraft.client.MinecraftClient;
+import net.minecraft.client.option.Perspective;
 import net.minecraft.entity.Entity;
 import net.minecraft.entity.LivingEntity;
 import net.minecraft.entity.player.PlayerEntity;
 import net.minecraft.item.ShieldItem;
-import net.minecraft.network.packet.c2s.play.ClientCommandC2SPacket;
+import net.minecraft.network.packet.c2s.play.PlayerMoveC2SPacket;
 import net.minecraft.network.packet.c2s.play.PlayerActionC2SPacket;
 import net.minecraft.util.Hand;
 import net.minecraft.util.hit.BlockHitResult;
@@ -42,15 +43,13 @@ public class SpeedMod implements ModInitializer {
     private static boolean shieldBreaker = true;
     private static boolean unpressShield = true;
 
-    // Ротация
+    // Ротация (локальные углы для третьего лица)
     private static Vector2f selfRotation = new Vector2f(0, 0);
     private static Vector2f targetRotation = new Vector2f(0, 0);
-    private static Vector2f fakeRotation = new Vector2f(0, 0);
-    private static Vector2f fakeTargetRotation = new Vector2f(0, 0);
 
     @Override
     public void onInitialize() {
-        LOGGER.info("[ReallyWorld Aura] Loaded. Press R to toggle.");
+        LOGGER.info("[ReallyWorld Aura] First-person: silent aim, Third-person: visible aim. Press R.");
         Thread tickThread = new Thread(() -> {
             while (true) {
                 try {
@@ -61,7 +60,7 @@ public class SpeedMod implements ModInitializer {
                     boolean currentR = GLFW.glfwGetKey(window, GLFW.GLFW_KEY_R) == GLFW.GLFW_PRESS;
                     if (currentR && !lastRState) {
                         enabled = !enabled;
-                        LOGGER.info(enabled ? "Aura ON (ReallyWorld mode)" : "Aura OFF");
+                        LOGGER.info(enabled ? "Aura ON" : "Aura OFF");
                         if (!enabled) target = null;
                         Thread.sleep(150);
                     }
@@ -81,30 +80,65 @@ public class SpeedMod implements ModInitializer {
         updateTarget();
         if (target == null) {
             selfRotation = new Vector2f(mc.player.getYaw(), mc.player.getPitch());
-            fakeRotation = new Vector2f(mc.player.getYaw(), mc.player.getPitch());
             return;
         }
 
-        updateRotation();
-        attackTarget();
-        fakeRotation();
+        // Вычисляем целевые углы
+        targetRotation = rotationAngles(target);
 
-        // Режим ReallyWorld – оригинальная логика
+        // Логика ReallyWorld (блоки, тики)
         boolean hasBlock = isBlockBetween(mc.player.getEyePos(), target.getBoundingBox().getCenter(), distance);
-        boolean isGliding = mc.player.isGliding(); // исправлено: isFallFlying -> isGliding
+        boolean isGliding = mc.player.isGliding();
+        boolean shouldRotate = true; // по умолчанию поворачиваем
 
         if (hasBlock && !isGliding && !wallsBypass) {
             if (ticks > 0) {
-                fastRotation();
                 ticks--;
             } else {
-                selfRotation = new Vector2f(mc.player.getYaw(), mc.player.getPitch());
+                shouldRotate = false; // не поворачиваем, если блок есть и тики кончились
             }
         } else {
-            fastRotation();
+            // нет блока или обход стен включён – можно поворачивать
+            if (hasBlock && wallsBypass) {
+                ticks = (int) snapTicks; // устанавливаем тики
+            }
         }
 
-        applySyncRotation();
+        // Определяем перспективу: первое или третье лицо
+        boolean isFirstPerson = mc.options.getPerspective() == Perspective.FIRST_PERSON;
+
+        if (shouldRotate) {
+            if (isFirstPerson) {
+                // Silent aim: отправляем пакет поворота, но не меняем локальную камеру
+                sendSilentLook(targetRotation.x, targetRotation.y);
+            } else {
+                // Третье лицо: поворачиваем камеру (видим наведение)
+                applyLocalRotation(targetRotation);
+            }
+        } else {
+            // Не поворачиваем – отправляем текущие углы (можно ничего не делать)
+            if (isFirstPerson) {
+                // Чтобы не спамить, можно отправить текущие углы, но не обязательно
+            } else {
+                applyLocalRotation(new Vector2f(mc.player.getYaw(), mc.player.getPitch()));
+            }
+        }
+
+        // Атака (не зависит от перспективы)
+        attackTarget();
+    }
+
+    private static void sendSilentLook(float yaw, float pitch) {
+        if (mc.getNetworkHandler() == null) return;
+        PlayerMoveC2SPacket.LookAndOnGround packet = new PlayerMoveC2SPacket.LookAndOnGround(yaw, pitch, mc.player.isOnGround(), false);
+        mc.getNetworkHandler().sendPacket(packet);
+    }
+
+    private static void applyLocalRotation(Vector2f angles) {
+        mc.player.setYaw(angles.x);
+        mc.player.setPitch(angles.y);
+        mc.player.headYaw = angles.x;
+        mc.player.bodyYaw = angles.x;
     }
 
     private static void updateTarget() {
@@ -127,11 +161,6 @@ public class SpeedMod implements ModInitializer {
         target = best;
     }
 
-    private static void updateRotation() {
-        targetRotation = rotationAngles(target);
-        fakeTargetRotation = rotationAngles(target);
-    }
-
     private static Vector2f rotationAngles(Entity target) {
         Vec3d eyePos = mc.player.getEyePos();
         Vec3d targetVec = target.getBoundingBox().getCenter().subtract(eyePos);
@@ -141,27 +170,19 @@ public class SpeedMod implements ModInitializer {
         return new Vector2f(wrapDegrees(yaw), clamp(pitch, -89, 89));
     }
 
-    private static void fastRotation() {
-        selfRotation = new Vector2f(targetRotation.x, targetRotation.y);
-    }
-
-    private static void fakeRotation() {
-        fakeRotation = new Vector2f(fakeTargetRotation.x, fakeTargetRotation.y);
-    }
-
     private static void attackTarget() {
         if (mc.player.getAttackCooldownProgress(0.5f) < 1.0f) return;
         if (target == null) return;
         if (mc.player.squaredDistanceTo(target) > distance * distance) return;
 
-        if (onlyCrits && mc.player.isOnGround()) return; // только в прыжке
+        if (onlyCrits && mc.player.isOnGround()) return;
 
         long now = System.currentTimeMillis();
         if (now - lastAttackTime >= 460L) {
-            if (wallsBypass && isBlockBetween(mc.player.getEyePos(), target.getBoundingBox().getCenter(), distance)) {
+            // Обновляем ticks для wallsBypass (уже сделано в tick, но можно ещё раз)
+            boolean hasBlock = isBlockBetween(mc.player.getEyePos(), target.getBoundingBox().getCenter(), distance);
+            if (wallsBypass && hasBlock) {
                 ticks = (int) snapTicks;
-            } else {
-                ticks = 0;
             }
 
             if (unpressShield && mc.player.getOffHandStack().getItem() instanceof ShieldItem) {
@@ -171,21 +192,12 @@ public class SpeedMod implements ModInitializer {
             mc.interactionManager.attackEntity(mc.player, target);
             mc.player.swingHand(Hand.MAIN_HAND);
 
-            // Shield Breaker упрощённо (можно расширить)
+            // Shield Breaker (упрощённо)
             if (shieldBreaker && target instanceof PlayerEntity && ((PlayerEntity) target).isBlocking()) {
-                // дополнительная атака не реализована, но структура осталась
+                // можно добавить дополнительную атаку
             }
 
             lastAttackTime = now;
-        }
-    }
-
-    private static void applySyncRotation() {
-        if (selfRotation != null) {
-            mc.player.setYaw(selfRotation.x);
-            mc.player.setPitch(selfRotation.y);
-            mc.player.headYaw = selfRotation.x;
-            mc.player.bodyYaw = selfRotation.x;
         }
     }
 
