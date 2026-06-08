@@ -14,39 +14,37 @@ import net.minecraft.util.math.BlockPos;
 import net.minecraft.util.math.Direction;
 import net.minecraft.util.math.Vec3d;
 import org.lwjgl.glfw.GLFW;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 public class SpeedMod implements ModInitializer {
-    private static final Logger LOGGER = LoggerFactory.getLogger("speedmod");
     private static final MinecraftClient mc = MinecraftClient.getInstance();
     private static boolean enabled = false;
-    private static boolean lastR = false;
+    private static boolean lastRState = false;
 
     @Override
     public void onInitialize() {
-        LOGGER.info("Carpet Fly mod loaded. Press R to toggle.");
+        // Поток для отслеживания клавиши R
         new Thread(() -> {
             while (true) {
                 try { Thread.sleep(50); } catch (InterruptedException e) { break; }
-                if (mc.player == null || mc.world == null) continue;
+                if (mc.player == null) continue;
                 long window = mc.getWindow().getHandle();
                 boolean currentR = GLFW.glfwGetKey(window, GLFW.GLFW_KEY_R) == GLFW.GLFW_PRESS;
-                if (currentR && !lastR) {
+                if (currentR && !lastRState) {
                     enabled = !enabled;
-                    LOGGER.info(enabled ? "Carpet Fly ON" : "Carpet Fly OFF");
+                    String msg = enabled ? "§aCarpet Fly ON" : "§cCarpet Fly OFF";
+                    if (mc.player != null) mc.player.sendMessage(net.minecraft.text.Text.literal(msg), false);
                     try { Thread.sleep(200); } catch (InterruptedException ignored) {}
                 }
-                lastR = currentR;
-                if (enabled) {
-                    tick();
-                }
+                lastRState = currentR;
+                if (enabled) handleCarpetFly();
             }
         }).start();
     }
 
-    private static void tick() {
-        // 1. Поиск ковра в инвентаре (первые 9 слотов)
+    private void handleCarpetFly() {
+        if (mc.player == null || mc.world == null) return;
+
+        // 1. Поиск ковра в горячей панели
         int carpetSlot = -1;
         for (int i = 0; i < 9; i++) {
             ItemStack stack = mc.player.getInventory().getStack(i);
@@ -63,42 +61,34 @@ public class SpeedMod implements ModInitializer {
         BlockPos playerPos = mc.player.getBlockPos();
         BlockPos blockUnder = playerPos.down();
 
-        // Условие: игрок не на земле, блок под ногами не воздух, блок на уровне ног — воздух
-        if (!mc.player.isOnGround() && !mc.world.isAir(blockUnder) && mc.world.isAir(playerPos)) {
+        // 2. Установка ковра под игроком
+        if (!mc.player.isOnGround() && mc.world.isAir(playerPos) && !mc.world.isAir(blockUnder)) {
             int prevSlot = mc.player.getInventory().selectedSlot;
             mc.player.getInventory().selectedSlot = carpetSlot;
-
             float prevPitch = mc.player.getPitch();
-            mc.player.setPitch(90f); // смотрим вниз
+            mc.player.setPitch(90f);
 
-            // Симулируем правый клик по блоку под игроком (ставим ковёр)
-            BlockHitResult hit = new BlockHitResult(
-                    new Vec3d(blockUnder.getX() + 0.5, blockUnder.getY() + 0.5, blockUnder.getZ() + 0.5),
-                    Direction.UP, blockUnder, false
-            );
-            mc.interactionManager.interactBlock(mc.player, Hand.MAIN_HAND, hit);
-
+            if (mc.interactionManager != null) {
+                BlockHitResult hitResult = new BlockHitResult(Vec3d.ofCenter(blockUnder), Direction.UP, blockUnder, false);
+                mc.interactionManager.interactBlock(mc.player, Hand.MAIN_HAND, hitResult);
+            }
             mc.player.swingHand(Hand.MAIN_HAND);
-
-            // Возвращаем обратно
             mc.player.setPitch(prevPitch);
             mc.player.getInventory().selectedSlot = prevSlot;
         }
 
-        // Прыжок, если стоим на ковре
+        // 3. Прыжок с подлётом, если стоим на ковре
         if (mc.player.isOnGround()) {
-            Block blockUnderFeet = mc.world.getBlockState(mc.player.getBlockPos()).getBlock();
+            Block blockUnderFeet = mc.world.getBlockState(playerPos).getBlock();
             if (blockUnderFeet instanceof CarpetBlock) {
-                // Отправляем пакет ABORT_DESTROY_BLOCK (для обхода)
-                mc.getNetworkHandler().sendPacket(new PlayerActionC2SPacket(
-                        PlayerActionC2SPacket.Action.ABORT_DESTROY_BLOCK,
-                        mc.player.getBlockPos().up(),
-                        Direction.UP
-                ));
                 mc.player.jump();
-                // Увеличиваем вертикальную скорость
-                double motionY = 0.55;
-                mc.player.setVelocity(mc.player.getVelocity().x, motionY, mc.player.getVelocity().z);
+                // Небольшой дополнительный импульс вверх (можно отрегулировать)
+                var vel = mc.player.getVelocity();
+                mc.player.setVelocity(vel.x, 0.55, vel.z);
+                // Пакет для обхода (опционально)
+                if (mc.getNetworkHandler() != null) {
+                    mc.getNetworkHandler().sendPacket(new PlayerActionC2SPacket(PlayerActionC2SPacket.Action.ABORT_DESTROY_BLOCK, playerPos.up(), Direction.UP));
+                }
             }
         }
     }
