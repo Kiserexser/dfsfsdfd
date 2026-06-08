@@ -10,7 +10,7 @@ public class SpeedMod implements ModInitializer {
     private static final MinecraftClient mc = MinecraftClient.getInstance();
     private static boolean enabled = false;
     private static boolean lastRState = false;
-    private static final double SPEED_BOOST = 1.41; // 0.47 * 3
+    private static final double SPEED_BOOST = 1.88; // 0.47 * 4
 
     @Override
     public void onInitialize() {
@@ -22,7 +22,7 @@ public class SpeedMod implements ModInitializer {
                 boolean currentR = GLFW.glfwGetKey(window, GLFW.GLFW_KEY_R) == GLFW.GLFW_PRESS;
                 if (currentR && !lastRState) {
                     enabled = !enabled;
-                    String msg = enabled ? "§aWebSpeed ON (x3)" : "§cWebSpeed OFF";
+                    String msg = enabled ? "§aWebSpeed ON (x4)" : "§cWebSpeed OFF";
                     if (mc.player != null) mc.player.sendMessage(Text.literal(msg), true);
                     try { Thread.sleep(200); } catch (InterruptedException ignored) {}
                 }
