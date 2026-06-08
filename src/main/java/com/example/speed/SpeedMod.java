@@ -34,7 +34,7 @@ public class SpeedMod implements ModInitializer {
 
     @Override
     public void onInitialize() {
-        LOGGER.info("[SpeedMod] Killaura (RW mode) loaded. Press R to toggle.");
+        LOGGER.info("[SpeedMod] Killaura (RW mode) with No Sprint Reset loaded. Press R to toggle.");
 
         Thread tickThread = new Thread(() -> {
             while (true) {
@@ -181,7 +181,15 @@ public class SpeedMod implements ModInitializer {
             client.player.headYaw += (random.nextFloat() - 0.5f) * 0.6f;
         }
 
+        // --- Сброс спринта (No Sprint Reset) ---
+        boolean wasSprinting = client.player.isSprinting();
         client.interactionManager.attackEntity(client.player, target);
+        if (wasSprinting) {
+            client.player.setSprinting(true);
+        }
+        // Дополнительно: отправка пакета начала спринта на сервер
+        client.player.setSprinting(true);
+        // --- Конец сброса спринта ---
 
         if (time % 2000 < 100) {
             float randomizer = 0.9f + random.nextFloat() * 0.2f;
