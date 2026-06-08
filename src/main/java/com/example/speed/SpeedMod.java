@@ -25,8 +25,8 @@ public class SpeedMod implements ModInitializer {
     // ========== НАСТРОЙКИ ==========
     private static final float RANGE = 4.0f;
     private static final long BASE_DELAY_MS = 460L;
-    private static final long DELAY_VARIATION_MS = 40L;   // разброс задержки
-    private static final float MAX_ANGLE_DELTA = 15.0f;   // для атаки
+    private static final long DELAY_VARIATION_MS = 40L;
+    private static final float MAX_ANGLE_DELTA = 15.0f;
 
     // ========== СОСТОЯНИЕ ==========
     private static boolean enabled = false;
@@ -37,7 +37,7 @@ public class SpeedMod implements ModInitializer {
     private static long attackTimerStart = 0;
     private static int lastBoostHitCount = -1;
 
-    // Данные для ротации (как в FTAngle)
+    // Данные для ротации
     private static float lastYaw = 0, lastPitch = 0;
     private static boolean initAngles = false;
 
@@ -46,18 +46,22 @@ public class SpeedMod implements ModInitializer {
         LOGGER.info("[FTAngle Killaura] Press R to toggle.");
         new Thread(() -> {
             while (true) {
-                try { Thread.sleep(50); } catch (InterruptedException e) { break; }
-                if (mc.player == null || mc.world == null) continue;
-                long win = mc.getWindow().getHandle();
-                boolean currR = GLFW.glfwGetKey(win, GLFW.GLFW_KEY_R) == GLFW.GLFW_PRESS;
-                if (currR && !lastR) {
-                    enabled = !enabled;
-                    LOGGER.info(enabled ? "Killaura ON" : "Killaura OFF");
-                    if (!enabled) target = null;
-                    Thread.sleep(150);
+                try {
+                    Thread.sleep(50);
+                    if (mc.player == null || mc.world == null) continue;
+                    long win = mc.getWindow().getHandle();
+                    boolean currR = GLFW.glfwGetKey(win, GLFW.GLFW_KEY_R) == GLFW.GLFW_PRESS;
+                    if (currR && !lastR) {
+                        enabled = !enabled;
+                        LOGGER.info(enabled ? "Killaura ON" : "Killaura OFF");
+                        if (!enabled) target = null;
+                        try { Thread.sleep(150); } catch (InterruptedException ignored) {}
+                    }
+                    lastR = currR;
+                    if (enabled) tick();
+                } catch (InterruptedException e) {
+                    break;
                 }
-                lastR = currR;
-                if (enabled) tick();
             }
         }).start();
     }
@@ -75,14 +79,12 @@ public class SpeedMod implements ModInitializer {
             initAngles = true;
         }
 
-        // Идеальные углы на цель
         Vec3d eye = mc.player.getEyePos();
         Vec3d to = target.getBoundingBox().getCenter().subtract(eye);
         double hyp = Math.hypot(to.x, to.z);
         float idealYaw = wrap((float) (Math.toDegrees(Math.atan2(to.z, to.x)) - 90));
         float idealPitch = clamp((float) -Math.toDegrees(Math.atan2(to.y, hyp)), -89, 89);
 
-        // Текущие углы
         float curYaw = lastYaw;
         float curPitch = lastPitch;
 
@@ -90,7 +92,6 @@ public class SpeedMod implements ModInitializer {
         float pitchDelta = idealPitch - curPitch;
         float totalDelta = (float) Math.hypot(Math.abs(yawDelta), Math.abs(pitchDelta));
 
-        // Атака с задержкой и проверкой угла
         long now = System.currentTimeMillis();
         long attackDelay = BASE_DELAY_MS + (long)(RAND.nextDouble() * DELAY_VARIATION_MS) - DELAY_VARIATION_MS/2;
         boolean canAttack = totalDelta < MAX_ANGLE_DELTA;
@@ -105,37 +106,30 @@ public class SpeedMod implements ModInitializer {
             attackTimerStart = now;
         }
 
-        // Вычисляем новые углы через логику FTAngle
         Turns newTurns = limitAngleChange(curYaw, curPitch, idealYaw, idealPitch, yawDelta, pitchDelta, totalDelta);
         lastYaw = newTurns.yaw;
         lastPitch = newTurns.pitch;
 
-        // Применяем ротацию (видимую для всех)
         mc.player.setYaw(lastYaw);
         mc.player.setPitch(lastPitch);
         mc.player.headYaw = lastYaw;
         mc.player.bodyYaw = lastYaw;
     }
 
-    // Полная логика FTAngle (земля/воздух, шумы, буст-джиттер)
     private static Turns limitAngleChange(float curYaw, float curPitch, float targetYaw, float targetPitch,
                                           float yawDelta, float pitchDelta, float totalDelta) {
-        boolean onGround = mc.player.isOnGround();
         if (totalDelta < 1e-4f) {
             return new Turns(targetYaw, targetPitch);
         }
-        if (onGround) {
-            return buildGroundRotation(curYaw, curPitch, targetYaw, targetPitch,
-                    yawDelta, pitchDelta, totalDelta);
+        if (mc.player.isOnGround()) {
+            return buildGroundRotation(curYaw, curPitch, targetYaw, targetPitch, yawDelta, pitchDelta, totalDelta);
         } else {
-            return buildAirRotation(curYaw, curPitch, targetYaw, targetPitch,
-                    yawDelta, pitchDelta, totalDelta);
+            return buildAirRotation(curYaw, curPitch, targetYaw, targetPitch, yawDelta, pitchDelta, totalDelta);
         }
     }
 
     private static Turns buildGroundRotation(float curYaw, float curPitch, float targetYaw, float targetPitch,
                                              float yawDelta, float pitchDelta, float totalDelta) {
-        // Параметры как в оригинальном FTAngle (без зависимостей от Aura)
         boolean instantTrack = target != null && (System.currentTimeMillis() - lastAttackTime) < 500;
         float followStrength = instantTrack ? 1.0f : (RANDOM.nextBoolean() ? 1.2f : 2.0f);
         float yawLimit = Math.abs(yawDelta / totalDelta) * 180.0f;
@@ -146,7 +140,6 @@ public class SpeedMod implements ModInitializer {
         float newYaw = MathHelper.lerp(interp, curYaw, curYaw + clampedYaw);
         float newPitch = MathHelper.lerp(interp, curPitch, curPitch + clampedPitch);
 
-        // Паттерн шума (ground)
         long elapsed = System.currentTimeMillis() - attackTimerStart;
         boolean attackFinished = elapsed > 1000;
         int pattern = hitCount % 3;
@@ -171,12 +164,10 @@ public class SpeedMod implements ModInitializer {
             pitchNoise = !attackFinished ? randomBetween(2.0f, 7.0f) * offset.pitch : 0.0f;
         }
 
-        // Вторичное ограничение (noiseScale для yaw/pitch)
         float noiseScale2 = Math.abs(yawDelta / totalDelta) * 180.0f;
         float pitchScale2 = Math.abs(pitchDelta / totalDelta) * 180.0f;
         float clampedYaw2 = MathHelper.clamp(yawDelta, -noiseScale2, noiseScale2);
         float clampedPitch2 = MathHelper.clamp(pitchDelta, -pitchScale2, pitchScale2);
-        float interp2 = MathHelper.clamp(randomBetween(-1.0f, -0.8f), 0.0f, 1.0f); // как baseInterpolation = -1.0f? Но по коду берем из attackTimer.finished(1000)? Упростим: если attackFinished то 1.0, иначе -1.0
         float baseInterp = attackFinished ? 1.0f : -1.0f;
         float interpFinal = MathHelper.clamp(randomBetween(baseInterp, baseInterp + 0.2f), 0.0f, 1.0f);
         float finalYaw = MathHelper.lerp(interpFinal, curYaw, curYaw + clampedYaw2) + yawNoise;
