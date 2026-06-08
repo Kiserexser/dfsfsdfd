@@ -31,7 +31,6 @@ public class SpeedMod implements ModInitializer {
         }).start();
     }
 
-    // GUI без затемнения и блюра – только окно
     static class LinxesGUI extends Screen {
         private int selectedCategory = 0;
         private int scrollOffset = 0;
@@ -74,8 +73,10 @@ public class SpeedMod implements ModInitializer {
 
         @Override
         public void render(DrawContext ctx, int mouseX, int mouseY, float delta) {
-            // Никакого renderBackground – фон остаётся чистым (игровой экран виден)
-            // Рисуем только наше окно с закруглёнными углами
+            // Полностью заливаем экран тёмным цветом, чтобы перекрыть блюр клиента
+            ctx.fill(0, 0, width, height, 0xEE000000); // полупрозрачный чёрный (можно сделать 0xFF000000 для полной непрозрачности)
+
+            // Окно с закруглёнными углами
             drawRoundedWindow(ctx, winX, winY, WIN_W, WIN_H, 12, 0xEE1E1E1E);
 
             // Заголовок
@@ -127,7 +128,7 @@ public class SpeedMod implements ModInitializer {
             // Нижняя строка
             ctx.drawCenteredTextWithShadow(textRenderer, Text.literal("Linxes Client"), winX + WIN_W / 2, winY + WIN_H - 12, 0xAAAAAA);
 
-            super.render(ctx, mouseX, mouseY, delta);
+            // super.render не вызываем, чтобы не добавлять лишнего
         }
 
         private void drawRoundedWindow(DrawContext ctx, int x, int y, int w, int h, int r, int color) {
