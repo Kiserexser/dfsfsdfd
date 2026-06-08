@@ -73,8 +73,7 @@ public class SpeedMod implements ModInitializer {
 
         @Override
         public void render(DrawContext ctx, int mouseX, int mouseY, float delta) {
-            // Не рисуем фон экрана – окно поверх игры без затемнения
-            // Рисуем только окно
+            // Рисуем только окно с закруглёнными углами (без фона экрана)
             fillRounded(ctx, winX, winY, WIN_W, WIN_H, 12, 0xEE1E1E1E);
 
             // Заголовок
@@ -96,7 +95,7 @@ public class SpeedMod implements ModInitializer {
                 }
             }
 
-            // Список модулей
+            // Список модулей (с прокруткой)
             int listX = winX + 10;
             int listY = winY + 55;
             int listW = WIN_W - 20;
@@ -126,9 +125,6 @@ public class SpeedMod implements ModInitializer {
             // Нижняя строка
             ctx.drawCenteredTextWithShadow(textRenderer, Text.literal("Linxes Client"), winX + WIN_W / 2, winY + WIN_H - 12, 0xAAAAAA);
 
-            // Не вызываем super.render, чтобы не было фона
-            // но можно вызвать, он всё равно не рисует фон, если нет renderBackground
-            // оставим для стандартной обработки детей (но у нас их нет)
             super.render(ctx, mouseX, mouseY, delta);
         }
 
