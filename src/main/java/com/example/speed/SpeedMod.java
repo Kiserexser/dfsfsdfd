@@ -136,10 +136,7 @@ public class SpeedMod implements ModInitializer {
         long delay = MIN_DELAY + (long)(random.nextDouble() * (MAX_DELAY - MIN_DELAY));
         boolean canAttack = Math.abs(deltaYaw) < 15f && Math.abs(deltaPitch) < 15f;
         if (now - lastAttackTime >= delay && canAttack) {
-            // Критический удар (прыжок, если на земле)
-            if (mc.player.isOnGround()) {
-                mc.player.jump();
-            }
+            // Авто прыжок (критические удары) удалён по требованию пользователя
             boolean wasSprinting = mc.player.isSprinting();
             mc.interactionManager.attackEntity(mc.player, target);
             if (!NO_SWING) {
