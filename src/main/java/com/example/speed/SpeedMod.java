@@ -2,6 +2,9 @@ package com.example.speed;
 
 import net.fabricmc.api.ModInitializer;
 import net.minecraft.client.MinecraftClient;
+import net.minecraft.client.render.BufferBuilder;
+import net.minecraft.client.render.Tessellator;
+import net.minecraft.client.render.VertexFormats;
 import net.minecraft.entity.Entity;
 import net.minecraft.entity.LivingEntity;
 import net.minecraft.entity.player.PlayerEntity;
@@ -11,6 +14,7 @@ import net.minecraft.util.math.Box;
 import net.minecraft.util.math.MathHelper;
 import net.minecraft.util.math.Vec3d;
 import org.lwjgl.glfw.GLFW;
+import org.lwjgl.opengl.GL11;
 
 import java.util.List;
 import java.util.Random;
@@ -23,23 +27,62 @@ public class SpeedMod implements ModInitializer {
     private static long lastAttackTime = 0;
     private static final Random random = new Random();
 
-    // Настройки
-    private static final float RANGE = 4.2f;
-    private static final long MIN_DELAY = 750L;
-    private static final long MAX_DELAY = 850L;
-    private static final float ROTATION_SPEED = 0.35f;
-    private static final float HEAD_CIRCLE_AMP = 12f;
-    private static final float HEAD_CIRCLE_SPEED = 1.8f;
-    private static final boolean USE_GCD = true;
-    private static final boolean SILENT_AIM = true;
-    private static final boolean ADD_NOISE = true;
-    private static final boolean NO_SWING = false;
+    // ========== НАСТРОЙКИ ==========
+    private static final float RANGE = 4.2f;                 // радиус атаки (блоки)
+    private static final long MIN_DELAY = 750L;              // мин. задержка (мс)
+    private static final long MAX_DELAY = 850L;              // макс. задержка
+    private static final float FOV_RADIUS = 60.0f;           // угол обзора (градусы)
+    private static final boolean SHOW_FOV_CIRCLE = true;     // рисовать круг на экране (требует Fabric API)
+    private static final boolean HEAD_SHAKE = true;          // тряска головы (обход)
+    private static final float HEAD_SHAKE_AMP = 8.0f;        // амплитуда поворотов головы
+    private static final float HEAD_SHAKE_SPEED = 1.5f;      // скорость
 
-    // Silent Aim
-    private static float sentYaw = 0, sentPitch = 0;
-    private static boolean initSent = false;
-    private static float currentYaw = 0, currentPitch = 0;
+    // ========== Рендер круга (только при SHOW_FOV_CIRCLE = true и Fabric API) ==========
+    static {
+        if (SHOW_FOV_CIRCLE) {
+            // Регистрация через Fabric API (раскомментируйте, если добавили Fabric API)
+            // net.fabricmc.fabric.api.client.rendering.v1.HudRenderCallback.EVENT.register((context, tickDelta) -> renderFovCircle());
+            System.out.println("[SpeedMod] FOV circle needs Fabric API. Set SHOW_FOV_CIRCLE=false or add Fabric API.");
+        }
+    }
 
+    private static void renderFovCircle() {
+        if (!killaura) return;
+        if (mc.player == null || mc.currentScreen != null) return;
+
+        float fovDeg = FOV_RADIUS;
+        int sw = mc.getWindow().getScaledWidth();
+        int sh = mc.getWindow().getScaledHeight();
+        float cx = sw / 2f;
+        float cy = sh / 2f;
+        float gameFov = (float) mc.gameRenderer.getFov(mc.gameRenderer.getCamera(), mc.getTickDelta(), true);
+        float radiusPx = (float) (Math.tan(Math.toRadians(fovDeg / 2.0)) / Math.tan(Math.toRadians(gameFov / 2.0))) * (sh / 2f);
+        int segments = 64;
+        int color = 0xFFFFFF;
+        GL11.glEnable(GL11.GL_LINE_SMOOTH);
+        net.minecraft.client.render.RenderSystem.disableTexture();
+        net.minecraft.client.render.RenderSystem.enableBlend();
+        Tessellator tess = Tessellator.getInstance();
+        BufferBuilder buf = tess.getBuffer();
+        buf.begin(GL11.GL_LINE_LOOP, VertexFormats.POSITION_COLOR);
+        int r = (color >> 16) & 0xFF;
+        int g = (color >> 8) & 0xFF;
+        int b = color & 0xFF;
+        int a = 200;
+        org.joml.Matrix4f mat = new org.joml.Matrix4f().identity();
+        for (int i = 0; i < segments; i++) {
+            double angle = 2.0 * Math.PI * i / segments;
+            float px = cx + (float) (Math.cos(angle) * radiusPx);
+            float py = cy + (float) (Math.sin(angle) * radiusPx);
+            buf.vertex(px, py, 0).color(r, g, b, a).next();
+        }
+        tess.draw();
+        net.minecraft.client.render.RenderSystem.enableTexture();
+        net.minecraft.client.render.RenderSystem.disableBlend();
+        GL11.glDisable(GL11.GL_LINE_SMOOTH);
+    }
+
+    // ========== Основной поток (включение/выключение по R) ==========
     @Override
     public void onInitialize() {
         new Thread(() -> {
@@ -60,104 +103,83 @@ public class SpeedMod implements ModInitializer {
         }).start();
     }
 
-    private static float getGCD() {
-        double sens = mc.options.getMouseSensitivity().getValue();
-        float gcd = (float) (sens * 0.6 + 0.2);
-        gcd = gcd * gcd * gcd * 8.0f;
-        return Math.max(gcd, 0.001f);
-    }
-
+    // ========== Логика Killaura ==========
     private void tick() {
-        if (mc.currentScreen != null) return;
-
         updateTarget();
-        if (target == null) {
-            initSent = false;
-            return;
-        }
+        if (target == null) return;
 
-        // Идеальные углы на цель
-        Vec3d eye = mc.player.getEyePos();
-        Vec3d to = target.getBoundingBox().getCenter().subtract(eye);
-        double hyp = Math.hypot(to.x, to.z);
-        float idealYaw = wrap((float) (Math.toDegrees(Math.atan2(to.z, to.x)) - 90));
-        float idealPitch = clamp((float) -Math.toDegrees(Math.atan2(to.y, hyp)), -89, 89);
+        // Проверка дистанции и видимости
+        double distSq = mc.player.squaredDistanceTo(target);
+        if (distSq > RANGE * RANGE) return;
+        if (!mc.player.canSee(target)) return;
 
-        if (!initSent) {
-            sentYaw = mc.player.getYaw();
-            sentPitch = mc.player.getPitch();
-            currentYaw = sentYaw;
-            currentPitch = sentPitch;
-            initSent = true;
-        }
-
-        // Плавное наведение отправляемых углов
-        float deltaYaw = wrap(idealYaw - currentYaw);
-        float deltaPitch = idealPitch - currentPitch;
-        currentYaw += deltaYaw * ROTATION_SPEED;
-        currentPitch += deltaPitch * ROTATION_SPEED;
-        currentYaw = wrap(currentYaw);
-        currentPitch = clamp(currentPitch, -89, 89);
-
-        // GCD
-        if (USE_GCD) {
-            float gcd = getGCD();
-            currentYaw -= currentYaw % gcd;
-            currentPitch -= currentPitch % gcd;
-        }
-
-        // Микро-шум
-        if (ADD_NOISE) {
-            currentYaw += (random.nextFloat() - 0.5f) * 0.3f;
-            currentPitch += (random.nextFloat() - 0.5f) * 0.2f;
-            currentYaw = wrap(currentYaw);
-            currentPitch = clamp(currentPitch, -89, 89);
-        }
-
-        // Silent Aim – отправка пакетов на сервер
-        if (SILENT_AIM && mc.getNetworkHandler() != null) {
-            PlayerMoveC2SPacket.LookAndOnGround packet = new PlayerMoveC2SPacket.LookAndOnGround(currentYaw, currentPitch, mc.player.isOnGround(), false);
-            mc.getNetworkHandler().sendPacket(packet);
-        } else {
-            mc.player.setYaw(currentYaw);
-            mc.player.setPitch(currentPitch);
-        }
-
-        // Вращение головы для других
-        float time = System.currentTimeMillis() / 1000f;
-        float headYawOffset = (float) Math.sin(time * HEAD_CIRCLE_SPEED) * HEAD_CIRCLE_AMP;
-        float bodyYaw = SILENT_AIM ? sentYaw : currentYaw;
-        mc.player.headYaw = bodyYaw + headYawOffset;
-        mc.player.bodyYaw = bodyYaw + headYawOffset;
-
-        // Атака – используем реальный угол игрока для проверки, смотрит ли он на цель
-        float realYaw = mc.player.getYaw();
-        float realPitch = mc.player.getPitch();
-        float realDeltaYaw = wrap(idealYaw - realYaw);
-        float realDeltaPitch = idealPitch - realPitch;
-        boolean isLookingAtTarget = Math.abs(realDeltaYaw) < 15f && Math.abs(realDeltaPitch) < 15f;
+        // Проверка FOV (цель должна быть в круге)
+        if (!isInFov(target, FOV_RADIUS)) return;
 
         long now = System.currentTimeMillis();
         long delay = MIN_DELAY + (long)(random.nextDouble() * (MAX_DELAY - MIN_DELAY));
-        if (now - lastAttackTime >= delay && isLookingAtTarget) {
-            // Атака только если игрок реально смотрит на цель
+        if (now - lastAttackTime >= delay) {
+            // Отправляем пакет поворота (Silent Aim)
+            sendLookAtTarget(target);
+            // Атакуем
             boolean wasSprinting = mc.player.isSprinting();
             mc.interactionManager.attackEntity(mc.player, target);
-            if (!NO_SWING) {
-                mc.player.swingHand(net.minecraft.util.Hand.MAIN_HAND);
-            }
+            mc.player.swingHand(net.minecraft.util.Hand.MAIN_HAND);
             if (wasSprinting) mc.player.setSprinting(true);
             mc.player.setSprinting(true);
             lastAttackTime = now;
+        } else {
+            // Режим ожидания: тряска головы (обход)
+            if (HEAD_SHAKE) {
+                float time = (System.currentTimeMillis() % 2000) / 2000.0f * (float) Math.PI * 2;
+                float shakeYaw = (float) Math.sin(time * HEAD_SHAKE_SPEED) * HEAD_SHAKE_AMP;
+                float shakePitch = (float) Math.cos(time * HEAD_SHAKE_SPEED * 1.3f) * HEAD_SHAKE_AMP * 0.5f;
+                mc.player.headYaw = mc.player.getYaw() + shakeYaw;
+                mc.player.bodyYaw = mc.player.getYaw() + shakeYaw;
+                // Можно добавить и pitch, но обычно не нужно
+            }
         }
     }
 
+    // Отправка пакета поворота на цель (Silent Aim)
+    private void sendLookAtTarget(Entity target) {
+        if (mc.getNetworkHandler() == null) return;
+        Vec3d eye = mc.player.getEyePos();
+        Vec3d to = target.getBoundingBox().getCenter().subtract(eye);
+        double hyp = Math.hypot(to.x, to.z);
+        float yaw = (float) (Math.toDegrees(Math.atan2(to.z, to.x)) - 90);
+        float pitch = (float) -Math.toDegrees(Math.atan2(to.y, hyp));
+        yaw = wrap(yaw);
+        pitch = clamp(pitch, -89, 89);
+        PlayerMoveC2SPacket.LookAndOnGround packet = new PlayerMoveC2SPacket.LookAndOnGround(yaw, pitch, mc.player.isOnGround(), false);
+        mc.getNetworkHandler().sendPacket(packet);
+    }
+
+    // Проверка, находится ли цель внутри круга FOV
+    private boolean isInFov(Entity entity, float fovDeg) {
+        if (fovDeg >= 180.0f) return true;
+        float halfFov = fovDeg / 2.0f;
+        Vec3d eyes = mc.player.getEyePos();
+        Box box = entity.getBoundingBox();
+        double[] checkY = {box.minY, (box.minY + box.maxY) / 2.0, box.maxY};
+        double cx = (box.minX + box.maxX) / 2.0;
+        double cz = (box.minZ + box.maxZ) / 2.0;
+        for (double y : checkY) {
+            Vec3d dir = new Vec3d(cx - eyes.x, y - eyes.y, cz - eyes.z).normalize();
+            float pYaw = (float) Math.toDegrees(Math.atan2(-dir.x, dir.z));
+            float pPitch = (float) (-Math.toDegrees(Math.atan2(dir.y, Math.hypot(dir.x, dir.z))));
+            float dYaw = Math.abs(wrap(pYaw - mc.player.getYaw()));
+            float dPitch = Math.abs(pPitch - mc.player.getPitch());
+            if (dYaw <= halfFov && dPitch <= halfFov) return true;
+        }
+        return false;
+    }
+
+    // Выбор цели
     private void updateTarget() {
-        // Если цель существует, жива и в радиусе – оставляем
         if (target != null && target.isAlive() && mc.player.squaredDistanceTo(target) <= RANGE * RANGE) {
             return;
         }
-        // Иначе ищем новую
         Entity best = null;
         double closest = RANGE * RANGE;
         Box box = mc.player.getBoundingBox().expand(RANGE);
@@ -174,13 +196,13 @@ public class SpeedMod implements ModInitializer {
         target = best;
     }
 
+    // Утилиты
     private static float wrap(float v) {
         v %= 360f;
         if (v >= 180f) v -= 360f;
         if (v < -180f) v += 360f;
         return v;
     }
-
     private static float clamp(float v, float min, float max) {
         return Math.max(min, Math.min(max, v));
     }
