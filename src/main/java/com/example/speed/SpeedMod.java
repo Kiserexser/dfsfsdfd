@@ -23,21 +23,21 @@ public class SpeedMod implements ModInitializer {
     private static long lastAttackTime = 0;
     private static final Random random = new Random();
 
-    // Настройки
+    // ========== Настройки ==========
     private static final float RANGE = 4.2f;
-    private static final long ATTACK_DELAY = 460L;
-    private static final float ROTATION_SPEED = 0.35f;      // скорость наведения (0.35 = 35% за тик)
-    private static final float HEAD_CIRCLE_AMP = 12f;      // амплитуда вращения головы (видна другим)
-    private static final float HEAD_CIRCLE_SPEED = 1.8f;   // скорость вращения головы
-    private static final boolean USE_GCD = true;           // округление углов (Gross To Pixel)
-    private static final boolean SILENT_AIM = true;        // локальная камера не двигается, только пакеты
-    private static final boolean ADD_NOISE = true;         // случайный микро-шум в углы
+    private static final long MIN_DELAY = 750L;          // 0.75 сек
+    private static final long MAX_DELAY = 850L;          // 0.85 сек
+    private static final float ROTATION_SPEED = 0.35f;    // скорость наведения (35% за тик)
+    private static final float HEAD_CIRCLE_AMP = 12f;     // амплитуда вращения головы
+    private static final float HEAD_CIRCLE_SPEED = 1.8f;  // скорость вращения головы
+    private static final boolean USE_GCD = true;          // округление углов (Gross‑To‑Pixel)
+    private static final boolean SILENT_AIM = true;       // локальная камера не двигается
+    private static final boolean ADD_NOISE = true;        // микро‑шум в углы
+    private static final boolean NO_SWING = false;        // отключить взмах руки (по желанию)
 
-    // Переменные для Silent Aim
+    // Silent Aim переменные
     private static float sentYaw = 0, sentPitch = 0;
     private static boolean initSent = false;
-
-    // Для плавного наведения (только для Silent Aim)
     private static float currentYaw = 0, currentPitch = 0;
 
     @Override
@@ -68,6 +68,9 @@ public class SpeedMod implements ModInitializer {
     }
 
     private void tick() {
+        // Не атакуем при открытом GUI
+        if (mc.currentScreen != null) return;
+
         updateTarget();
         if (target == null) {
             initSent = false;
@@ -89,7 +92,7 @@ public class SpeedMod implements ModInitializer {
             initSent = true;
         }
 
-        // Плавное изменение отправляемых углов (для Silent Aim)
+        // Плавное наведение
         float deltaYaw = wrap(idealYaw - currentYaw);
         float deltaPitch = idealPitch - currentPitch;
         currentYaw += deltaYaw * ROTATION_SPEED;
@@ -104,7 +107,7 @@ public class SpeedMod implements ModInitializer {
             currentPitch -= currentPitch % gcd;
         }
 
-        // Случайный микро-шум (для обхода)
+        // Микро-шум
         if (ADD_NOISE) {
             currentYaw += (random.nextFloat() - 0.5f) * 0.3f;
             currentPitch += (random.nextFloat() - 0.5f) * 0.2f;
@@ -112,39 +115,36 @@ public class SpeedMod implements ModInitializer {
             currentPitch = clamp(currentPitch, -89, 89);
         }
 
-        // === Silent Aim: отправка пакетов серверу ===
-        if (SILENT_AIM) {
-            if (mc.getNetworkHandler() != null) {
-                // Пакет поворота (другие увидят твою голову)
-                PlayerMoveC2SPacket.LookAndOnGround packet = new PlayerMoveC2SPacket.LookAndOnGround(currentYaw, currentPitch, mc.player.isOnGround(), false);
-                mc.getNetworkHandler().sendPacket(packet);
-            }
-            // Локальная камера не меняется – ты не видишь наведения
+        // Silent Aim: отправка пакетов на сервер, локальная камера не меняется
+        if (SILENT_AIM && mc.getNetworkHandler() != null) {
+            PlayerMoveC2SPacket.LookAndOnGround packet = new PlayerMoveC2SPacket.LookAndOnGround(currentYaw, currentPitch, mc.player.isOnGround(), false);
+            mc.getNetworkHandler().sendPacket(packet);
         } else {
-            // Обычный режим – камера поворачивается
             mc.player.setYaw(currentYaw);
             mc.player.setPitch(currentPitch);
         }
 
-        // Ротация головы (визуальный эффект для других) – отдельно от прицела
+        // Вращение головы (визуальный эффект для других)
         float time = System.currentTimeMillis() / 1000f;
         float headYawOffset = (float) Math.sin(time * HEAD_CIRCLE_SPEED) * HEAD_CIRCLE_AMP;
-        float headPitchOffset = (float) Math.cos(time * HEAD_CIRCLE_SPEED) * HEAD_CIRCLE_AMP * 0.5f;
         float bodyYaw = SILENT_AIM ? sentYaw : currentYaw;
         mc.player.headYaw = bodyYaw + headYawOffset;
         mc.player.bodyYaw = bodyYaw + headYawOffset;
 
-        // Атака
+        // Атака со случайной задержкой
         long now = System.currentTimeMillis();
+        long delay = MIN_DELAY + (long)(random.nextDouble() * (MAX_DELAY - MIN_DELAY));
         boolean canAttack = Math.abs(deltaYaw) < 15f && Math.abs(deltaPitch) < 15f;
-        if (now - lastAttackTime >= ATTACK_DELAY && canAttack) {
-            // AutoCritical
+        if (now - lastAttackTime >= delay && canAttack) {
+            // Критический удар (прыжок, если на земле)
             if (mc.player.isOnGround()) {
                 mc.player.jump();
             }
             boolean wasSprinting = mc.player.isSprinting();
             mc.interactionManager.attackEntity(mc.player, target);
-            mc.player.swingHand(net.minecraft.util.Hand.MAIN_HAND);
+            if (!NO_SWING) {
+                mc.player.swingHand(net.minecraft.util.Hand.MAIN_HAND);
+            }
             if (wasSprinting) mc.player.setSprinting(true);
             mc.player.setSprinting(true);
             lastAttackTime = now;
@@ -171,6 +171,14 @@ public class SpeedMod implements ModInitializer {
         target = best;
     }
 
-    private static float wrap(float v) { v %= 360f; if (v >= 180f) v -= 360f; if (v < -180f) v += 360f; return v; }
-    private static float clamp(float v, float min, float max) { return Math.max(min, Math.min(max, v)); }
+    private static float wrap(float v) {
+        v %= 360f;
+        if (v >= 180f) v -= 360f;
+        if (v < -180f) v += 360f;
+        return v;
+    }
+
+    private static float clamp(float v, float min, float max) {
+        return Math.max(min, Math.min(max, v));
+    }
 }
